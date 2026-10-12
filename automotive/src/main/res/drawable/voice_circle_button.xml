@@ -1,0 +1,1 @@
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/voice_line"><item android:drawable="@drawable/voice_circle"/></ripple>

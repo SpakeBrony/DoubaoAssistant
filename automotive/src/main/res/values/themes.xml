@@ -1,0 +1,61 @@
+<resources>
+
+    <style name="Theme.DoubaoAssistant" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@color/voice_base</item>
+        <item name="android:colorAccent">@color/voice_accent</item>
+        <item name="android:windowLightStatusBar">@bool/voice_light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/voice_light_system_bars</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
+
+    <style name="Voice.Text" parent="">
+        <item name="android:textColor">@color/voice_text</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="Voice.Text.Secondary" parent="Voice.Text">
+        <item name="android:textColor">@color/voice_secondary</item>
+    </style>
+    <style name="Voice.Text.Muted" parent="Voice.Text">
+        <item name="android:textColor">@color/voice_muted</item>
+    </style>
+    <style name="Voice.IconButton" parent="">
+        <item name="android:background">@drawable/voice_toolbar_button</item>
+        <item name="android:padding">16dp</item>
+        <item name="android:tint">@color/voice_text</item>
+        <item name="android:scaleType">fitCenter</item>
+    </style>
+    <style name="Voice.SettingLabel" parent="Voice.Text">
+        <item name="android:textSize">18sp</item>
+    </style>
+    <style name="Voice.CredentialInput" parent="Widget.AppCompat.EditText">
+        <item name="android:background">@drawable/voice_option</item>
+        <item name="android:textColor">@color/voice_text</item>
+        <item name="android:textColorHint">@color/voice_muted</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:minHeight">52dp</item>
+        <item name="android:padding">14dp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:maxLength">4096</item>
+        <item name="android:inputType">textPassword</item>
+        <item name="android:imeOptions">actionNext</item>
+        <item name="android:saveEnabled">false</item>
+        <item name="android:importantForAutofill">no</item>
+    </style>
+    <style name="Voice.SettingDetail" parent="Voice.Text.Secondary">
+        <item name="android:textSize">13sp</item>
+        <item name="android:layout_marginTop">10dp</item>
+    </style>
+    <style name="Voice.SettingButton" parent="Voice.Text.Secondary">
+        <item name="android:textSize">13sp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">@drawable/voice_option</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+</resources>

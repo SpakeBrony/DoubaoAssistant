@@ -1,0 +1,4 @@
+<!-- Lucide volume-2, ISC license. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="@android:color/transparent" android:strokeColor="@color/voice_secondary" android:strokeWidth="1.65" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M11,4.702 a0.705,0.705 0,0 0,-1.203 -0.498 L6.413,7.587 A1.4,1.4 0,0 1,5.416 8 H3 a1,1 0,0 0,-1 1 v6 a1,1 0,0 0,1 1 h2.416 a1.4,1.4 0,0 1,0.997 0.413 l3.383,3.384 A0.705,0.705 0,0 0,11 19.298 Z M16,9 a5,5 0,0 1,0 6 m3.364,3.364 a9,9 0,0 0,0 -12.728" />
+</vector>

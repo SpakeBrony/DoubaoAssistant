@@ -1,0 +1,22 @@
+<resources>
+    <color name="voice_base">#111318</color>
+    <color name="voice_pink">#251C2D</color>
+    <color name="voice_blue">#142630</color>
+    <color name="voice_lavender">#1E1D2B</color>
+    <color name="voice_text">#F2F3F5</color>
+    <color name="voice_secondary">#A5A7B0</color>
+    <color name="voice_muted">#747681</color>
+    <color name="voice_surface">#282B33</color>
+    <color name="voice_end_surface">#282B33</color>
+    <color name="voice_red">#FF626B</color>
+    <color name="voice_line">#0DFFFFFF</color>
+    <color name="voice_panel">#191B22</color>
+    <color name="voice_selected">#30323D</color>
+    <color name="voice_accent">#A8A2BA</color>
+    <color name="voice_scrim">#6505070C</color>
+    <color name="voice_primary">#DAD6E4</color>
+    <color name="voice_on_primary">#24212D</color>
+    <color name="voice_permission_granted">#8AA498</color>
+    <bool name="voice_light_system_bars">false</bool>
+</resources>
+
