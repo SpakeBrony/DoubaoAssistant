@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import org.json.JSONObject
 
 // 只由服务主线程调用；请求属于服务 scope，页面关闭/重建不会重发问题。
 internal class ConversationCoordinator(
@@ -40,11 +41,12 @@ internal class ConversationCoordinator(
     private val onAsrCommand: (AsrCommand) -> Unit = {},
     private val lastResponseId: suspend (String) -> String? = { null },
     private val replyInstruction: () -> String = { "" },
+    private val aiControlEnabled: () -> Boolean = { true },
     private val answerMode: () -> AnswerMode = { AnswerMode.CHAT },
     private val onSingleQuestionRecognized: () -> Unit = {},
     private val executeOperation: suspend (AiOperation) -> AiOperationExecutor.Result = { AiOperationExecutor.Result(false) },
     private val judgeOperation: suspend (String) -> Boolean,
-    private val responses: (String, String?) -> Flow<ResponseProgress>,
+    private val responses: (String, String?, JSONObject?) -> Flow<ResponseProgress>,
 ) {
     private var enabled = false
     private var listeningEnabled = false
@@ -190,11 +192,12 @@ internal class ConversationCoordinator(
         val version = requestVersion
         val topicId = checkNotNull(ConversationRepository.activeTopic).id
         recordUserMessage(text)
-        val candidatePrompt = AsrIntentPrompt.instructionFor(text)
+        val controlEnabled = aiControlEnabled()
+        val candidatePrompt = if (controlEnabled) AsrIntentPrompt.instructionFor(text) else ""
         val style = replyInstruction()
         val previous = ConversationRepository.snapshot.value
-        val enabledIntents = AsrIntentPrompt.enabledIntents(text)
-        val timeFormats = AsrIntentPrompt.timeFormatsFor(text)
+        val enabledIntents = if (controlEnabled) AsrIntentPrompt.enabledIntents(text) else emptySet()
+        val timeFormats = if (controlEnabled) AsrIntentPrompt.timeFormatsFor(text) else emptySet()
         ConversationRepository.publish(previous.copy(error = null, ttsError = null, content = previous.content.copy(
             phase = ConversationPhase.THINKING,
             liveText = "",
@@ -213,9 +216,20 @@ internal class ConversationCoordinator(
             var classifying = candidatePrompt.isNotBlank()
             try {
                 // 关键词只是候选；先独立判断，false 完全不发送意图协议。
-                val intentRequest = classifying && judgeOperation(text)
+                val intentRequest = classifying && judgeOperation(text) && aiControlEnabled()
                 classifying = false
                 if (!enabled || version != requestVersion || ConversationRepository.activeTopic?.id != topicId) return@launch
+                if (intentRequest) {
+                    val current = ConversationRepository.snapshot.value
+                    ConversationRepository.publish(current.copy(content = current.content.copy(phase = ConversationPhase.EXECUTING)))
+                }
+                val outputSchema = if (intentRequest) AiResponseSchema.create(enabledIntents, timeFormats) else null
+                // 关闭操控时直接播放/显示普通回复，连 JSON 前缀也不判断。
+                operationCandidate = when {
+                    intentRequest -> true
+                    !controlEnabled || !aiControlEnabled() -> false
+                    else -> null
+                }
                 val requestText = listOf(text, style, candidatePrompt.takeIf { intentRequest }.orEmpty())
                     .filter { it.isNotBlank() }.joinToString("\n")
                 // 判断为聊天时，不应因为没有使用的 Config 提示词过长而拒绝本轮。
@@ -241,7 +255,7 @@ internal class ConversationCoordinator(
                     return@launch // 不能在数据库读取失败时擅自丢上下文发起付费请求。
                 }
                 if (!enabled || version != requestVersion || ConversationRepository.activeTopic?.id != topicId) return@launch
-                responses(requestText, previousId).collect { update ->
+                responses(requestText, previousId, outputSchema).collect { update ->
                     if (!enabled || version != requestVersion || responseTerminated) return@collect
                     if (update.text.isNotEmpty()) responseText = update.text
                     if (operationCandidate == null) operationCandidate = AiOperation.isJsonCandidate(responseText)
@@ -259,7 +273,8 @@ internal class ConversationCoordinator(
                                     var failureReply = operation.failureReply
                                     var successReply = operation.successReply
                                     val succeeded = try {
-                                        val result = executeOperation(operation)
+                                        // 请求期间关闭开关，也不能继续执行后续操作。
+                                        val result = if (aiControlEnabled()) executeOperation(operation) else AiOperationExecutor.Result(false)
                                         successReply = result.reply ?: operation.successReply
                                         result.succeeded
                                     } catch (e: CancellationException) {
@@ -341,7 +356,7 @@ internal class ConversationCoordinator(
                         phase = when {
                             update.error != null -> ConversationPhase.ERROR
                             update.completedId != null && !speechActive -> ConversationPhase.READY
-                            displayText.isEmpty() -> ConversationPhase.THINKING
+                            displayText.isEmpty() -> if (intentRequest) ConversationPhase.EXECUTING else ConversationPhase.THINKING
                             else -> ConversationPhase.SPEAKING
                         },
                     )))
@@ -479,7 +494,9 @@ internal class ConversationCoordinator(
 
     private fun recordUserMessage(text: String) {
         ensureTopic()
-        val message = newMessage(text, ConversationMessage.USER).copy(jsonMessage = AsrIntentPrompt.matchJsonFor(text))
+        val message = newMessage(text, ConversationMessage.USER).copy(
+            jsonMessage = if (aiControlEnabled()) AsrIntentPrompt.matchJsonFor(text) else null,
+        )
         saveMessage(message)
         val current = ConversationRepository.snapshot.value
         ConversationRepository.publish(current.copy(content = current.content.copy(

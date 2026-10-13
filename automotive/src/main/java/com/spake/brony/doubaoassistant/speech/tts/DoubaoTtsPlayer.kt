@@ -187,6 +187,7 @@ internal class DoubaoTtsPlayer(
         engine.setOptionInt(Sdk.PARAMS_KEY_TTS_RECV_TIMEOUT_INT, 15000)
         // SDK 播放器与音频焦点统一使用媒体通道，跟随设备媒体音量。
         engine.setOptionInt(Sdk.PARAMS_KEY_AUDIO_STREAM_TYPE_INT, Sdk.AUDIO_STREAM_TYPE_MEDIA)
+        engine.setOptionDouble(Sdk.PARAMS_KEY_TTS_VOLUME_RATIO_DOUBLE, 1.0)
         engine.setOptionBoolean(Sdk.PARAMS_KEY_TTS_ENABLE_PLAYER_BOOL, true)
         engine.setOptionBoolean(Sdk.PARAMS_KEY_TTS_ENABLE_DUMP_BOOL, false)
         engine.setOptionBoolean(Sdk.PARAMS_KEY_ENABLE_PLAYER_AUDIO_CALLBACK_BOOL, true)

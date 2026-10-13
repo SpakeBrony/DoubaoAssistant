@@ -303,7 +303,7 @@ class AiOperationTest {
             onSingleQuestionRecognized = { pauses++ }, executeOperation = {
                 operations += it
                 AiOperationExecutor.Result(finishOperation.await())
-            }, judgeOperation = { true }) { _, _ -> flow {
+            }, judgeOperation = { true }) { _, _, _ -> flow {
                 for (size in 1..structuredJson.length) {
                     emit(ResponseProgress(" \n" + structuredJson.take(size)))
                     assertTrue(tts.chunks.isEmpty())
@@ -345,7 +345,7 @@ class AiOperationTest {
         for (throwError in listOf(false, true)) {
             val tts = Tts()
             val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-                executeOperation = { if (throwError) error("接口失败") else createExecutor().execute(it) }, judgeOperation = { true }) { _, _ -> flow {
+                executeOperation = { if (throwError) error("接口失败") else createExecutor().execute(it) }, judgeOperation = { true }) { _, _, _ -> flow {
                 emit(ResponseProgress(structuredJson, "response_json"))
             } }
             coordinator.setEnabled(true)
@@ -363,7 +363,7 @@ class AiOperationTest {
             val tts = Tts()
             var executions = 0
             val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-                executeOperation = { executions++; AiOperationExecutor.Result(true) }, judgeOperation = { true }) { _, _ -> flow { emit(ResponseProgress(invalid, "bad_id")) } }
+                executeOperation = { executions++; AiOperationExecutor.Result(true) }, judgeOperation = { true }) { _, _, _ -> flow { emit(ResponseProgress(invalid, "bad_id")) } }
             coordinator.setEnabled(true)
             coordinator.onTextSubmitted("空调")
             runCurrent()
@@ -380,7 +380,7 @@ class AiOperationTest {
         var executions = 0
         val complete = CompletableDeferred<Unit>()
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            executeOperation = { executions++; AiOperationExecutor.Result(true) }, judgeOperation = { true }) { _, _ -> flow {
+            executeOperation = { executions++; AiOperationExecutor.Result(true) }, judgeOperation = { true }) { _, _, _ -> flow {
             emit(ResponseProgress(structuredJson.take(20)))
             complete.await()
             emit(ResponseProgress(structuredJson, "id", error = "网络失败"))
@@ -406,7 +406,7 @@ class AiOperationTest {
         val completed = CompletableDeferred<Boolean>()
         var executions = 0
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            executeOperation = { executions++; AiOperationExecutor.Result(completed.await()) }, judgeOperation = { true }) { _, _ -> flow { emit(ResponseProgress(structuredJson, "id")) } }
+            executeOperation = { executions++; AiOperationExecutor.Result(completed.await()) }, judgeOperation = { true }) { _, _, _ -> flow { emit(ResponseProgress(structuredJson, "id")) } }
         coordinator.setEnabled(true)
         coordinator.onTextSubmitted("空调")
         runCurrent()
@@ -432,7 +432,7 @@ class AiOperationTest {
         val tts = Tts()
         var executions = 0
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            executeOperation = { executions++; createExecutor().execute(it) }, judgeOperation = { true }) { _, _ -> flow {
+            executeOperation = { executions++; createExecutor().execute(it) }, judgeOperation = { true }) { _, _, _ -> flow {
             val fenced = "```json\n$unknown\n```"
             for (size in 1..fenced.length) {
                 emit(ResponseProgress(fenced.take(size)))

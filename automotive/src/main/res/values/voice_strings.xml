@@ -15,6 +15,7 @@
     <string name="voice_ready">可以开始说话</string>
     <string name="voice_listening">我在听</string>
     <string name="voice_thinking">想一想…</string>
+    <string name="voice_executing">执行中…</string>
     <string name="voice_speaking">回复中...</string>
     <string name="voice_paused">等待唤醒</string>
     <string name="voice_stopped">麦克风已关闭</string>

@@ -114,7 +114,7 @@ KWS 词表共 20 条：八条唤醒/恢复、四条闭嘴/别说话、两条关�
 
 所有 KWS 口令与 ASR 操作共用消息保存流程：命中词表中的完整口令记为用户角色 0，确认/错误文字记为系统角色 2，写入当前话题的 Room 数据库并显示在聊天列表，两类记录都不带 Response ID、不发送给 AI。问候确认文字为「我在」，其他成功口令为「好的」。历史未加载时先执行动作和播放提示音，加载完成后再补入原话题；期间切换话题则丢弃旧口令记录。KWS 清空待处理文字时不归零 ASR 的去重序号；每次新 ASR 请求只保留单调序号和历史，不再带出上一句确定文字，恢复监听不会重新提交旧问题。
 
-本地提示音用于 KWS 恢复及三类操作的 KWS/ASR 确认：你好/在吗与当前称呼及重复称呼的五条问候口令播放 wozai.mp3，其余口令播放 haode.mp3，均随动态称呼匹配，SoundPool 增益为 70%；普通 AI 回复继续使用云端 TTS 和正常 SDK 音量。KWS RESUME 命中取消旧 ASR 请求、清空旧句并恢复监听，包括正常前台聊天；STOP_REPLY 命中停止旧回复、清空旧句并暂停云端识别。恢复、闭嘴和退下都不重启或关闭 AudioRecord；只有关麦会关闭采音并同时停止 KWS/ASR。闭嘴先停止旧回复后播放本地确认，退下成功后播放本地确认。语音关麦与按钮关麦都只停止 KWS/ASR 采音，不取消当前 Responses 或 TTS；语音关麦额外播放本地确认，不抢占当前回答的音频焦点，按钮关麦不播确认。当前回答结束后仍保留通知和聊天小窗，没有回答时直接进入关麦待机；通知和小窗内的麦克风按钮可以手动重开。已配置关麦口令的临时前缀（称呼在前或在后）先延后语音打断，确定句匹配后才关麦；临时文字改写为普通问题时恢复打断，最终没有称呼的句子仍作为普通问题处理。ASR 若先把关麦前缀识别成其他普通文字，已发生的打断无法撤回；带任意前导句或混合多个操作的说法仍需实机验证。本地确认播放不自动开麦，不产生 TTS 网络请求。
+本地提示音用于 KWS 恢复及三类操作的 KWS/ASR 确认：你好/在吗与当前称呼及重复称呼的五条问候口令播放 wozai.mp3，其余口令播放 haode.mp3，均随动态称呼匹配，SoundPool 增益为 1.0；普通 AI 回复继续使用云端 TTS，显式设置 SDK 音量倍率为 1.0。TTS、wozai 和 haode 统一使用媒体通道，跟随设备媒体音量；TTS 在初始化前设置 AUDIO_STREAM_TYPE_MEDIA，音频焦点和 SoundPool 使用 USAGE_MEDIA。KWS RESUME 命中取消旧 ASR 请求、清空旧句并恢复监听，包括正常前台聊天；STOP_REPLY 命中停止旧回复、清空旧句并暂停云端识别。恢复、闭嘴和退下都不重启或关闭 AudioRecord；只有关麦会关闭采音并同时停止 KWS/ASR。闭嘴先停止旧回复后播放本地确认，退下成功后播放本地确认。语音关麦与按钮关麦都只停止 KWS/ASR 采音，不取消当前 Responses 或 TTS；语音关麦额外播放本地确认，不抢占当前回答的音频焦点，按钮关麦不播确认。当前回答结束后仍保留通知和聊天小窗，没有回答时直接进入关麦待机；通知和小窗内的麦克风按钮可以手动重开。已配置关麦口令的临时前缀（称呼在前或在后）先延后语音打断，确定句匹配后才关麦；临时文字改写为普通问题时恢复打断，最终没有称呼的句子仍作为普通问题处理。ASR 若先把关麦前缀识别成其他普通文字，已发生的打断无法撤回；带任意前导句或混合多个操作的说法仍需实机验证。本地确认播放不自动开麦，不产生 TTS 网络请求。
 
 拼音使用 [mozillazg/pinyin-data](https://github.com/mozillazg/pinyin-data) 的 MIT 离线数据，版本及许可证位于 `assets/kws/pinyin-SOURCE.md` 与 `pinyin-LICENSE.txt`。逐行读取，仅保留昵称所需字的、模型 token 支持的读音；多音字组合最多 64 种，无法转换或超过上限时保留旧称呼并提示换用常用汉字，不联网、不加载完整字典到常驻内存。
 
@@ -134,11 +134,13 @@ KWS 命中退下口令或 ASR 确定句命中退下/退出/下去吧与当前昵
 
 ## 代码入口
 
+设置中的“AI操控功能”默认开启，使用本地 SP 的 `assistant/ai_control_enabled` 保存。关闭后不匹配 Config、不发送独立判断请求或 Schema、不识别操作 JSON、不执行操作，原话和回答风格直接走普通聊天，回复正常保存上下文 ID，也不记录输入命中的调试 JSON。服务逐次读取开关；请求期间关闭后不再执行尚未开始的 AI 操作。本地关闭麦克风、停止回答和退出口令仍独立处理。
+
 天气、时间通过独立 Config 按关键词加入提示词，意图为 `get_weather`、`get_time`，每项自带成功/失败文案。豆包只提取城市、国家、省份及查询日期，不生成实时天气或时间。所有意图统一在 `conversation/AiOperationExecutor.execute()` 分发，返回 `Result(succeeded, reply)`；普通操作只返回是否成功，天气/时间通过 `information/InformationController.kt` 获取真实回复。Coordinator 统一按结果显示、保存为系统回复和交给 TTS，不再单独分发天气/时间；完整模型 JSON 继续存入 `json_message` 供 debug 查看。
 
-不使用结构化输出 beta 或 JSON Schema。未命中 Config 时，原话和回答风格直接进入正式流式 AI。命中关键词时先发一次独立非流式 HTTP 判断请求：system 消息只包含 `AsrIntentPrompt.classificationPrompt`，user 消息只包含用户原话；`stream=false`、`store=false`、无 `previous_response_id`，只接受字面 `true` 或 `false`。这次判断不生成消息、不写数据库、不播报，不传正式意图协议。HTTP 判断超时为 20 秒，错误或非布尔回复会提示判断失败，停止本轮，不自动重试或猜测；打断、暂停和新话题会取消该请求。
+未命中 Config 时，原话和回答风格直接进入正式流式 AI。命中关键词时先发一次独立非流式 HTTP 判断请求：system 消息只包含 `AsrIntentPrompt.classificationPrompt`，user 消息只包含用户原话；`stream=false`、`store=false`、无 `previous_response_id`，只接受字面 `true` 或 `false`。这次判断不使用 Schema、不生成消息、不写数据库、不播报，不传正式意图协议。HTTP 判断超时为 20 秒，错误或非布尔回复会提示判断失败，停止本轮，不自动重试或猜测；打断、暂停和新话题会取消该请求。
 
-判断为 true 时，正式请求发送原话、回答风格、systemString 和命中的 Config prompt，不带历史 ID。判断为 false 时不加入任何 AsrIntentPrompt，按普通聊天继续原上下文。正式 API 使用 `text.format.type=text`，操作 JSON 完全由提示词约定，格式为 `{"actions":[...]}`，每项包含 intent、slots、success_reply、failure_reply；普通聊天直接返回自然文字。JSON 前缀缓冲到完成后才解析并执行，正式请求未加入意图协议时不允许执行 JSON 操作；执行前仍核对允许意图、时间格式及各操作参数。
+判断为 true 时，正式请求发送原话、回答风格、systemString 和命中的 Config prompt，不带历史 ID，并设置 `text.format.type=json_schema`、`strict=true`。`AiResponseSchema` 只包含本轮命中 Config 的意图及 unknown，格式为 `{"actions":[...]}`，每项包含 intent、slots、success_reply、failure_reply，不包含聊天分支。判断为 false 或未命中时不加入 AsrIntentPrompt 和 Schema，使用 `text.format.type=text`，按普通聊天继续原上下文、返回自然文字。操作请求完整缓冲到完成后才解析并执行，不向 UI/TTS 输出原始 JSON；正式请求未加入意图协议时不允许执行 JSON 操作，执行前仍核对允许意图、时间格式及各操作参数。
 
 关联 ID 以是否实际加入意图协议为准：判断为 true 的正式回复一律不保存 ID，即使返回普通文字；操作 JSON 的结果行仍是系统类型。判断为 false 或未命中 Config 的普通聊天回复保存 ID。读取聊天上下文时只取没有意图调试输出的有效 AI 回复，跳过旧意图请求记录；用户提问不保存 ID。独立判断的响应 ID 不使用、不存储。
 

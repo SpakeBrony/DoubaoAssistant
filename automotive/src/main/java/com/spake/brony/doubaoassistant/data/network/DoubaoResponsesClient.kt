@@ -87,7 +87,7 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
         }
     }
 
-    fun stream(text: String, previousId: String?): Flow<ResponseProgress> = callbackFlow {
+    fun stream(text: String, previousId: String?, outputSchema: JSONObject? = null): Flow<ResponseProgress> = callbackFlow {
         val credentials = CredentialStore(context).load()
         if (!credentials.ready) {
             trySend(ResponseProgress(error = context.getString(R.string.chat_credentials_missing)))
@@ -98,7 +98,7 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
             .url("https://ark.cn-beijing.volces.com/api/v3/responses")
             .header("Authorization", "Bearer ${credentials.arkApiKey}")
             .header("Accept", "text/event-stream")
-            .post(requestBody(text, previousId).toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .post(requestBody(text, previousId, outputSchema).toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
         val call = client.newCall(request)
         call.enqueue(object : Callback {
@@ -194,7 +194,7 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
             }
         }
 
-        internal fun requestBody(text: String, previousId: String?): JSONObject {
+        internal fun requestBody(text: String, previousId: String?, outputSchema: JSONObject? = null): JSONObject {
             require(text.isNotBlank() && text.length <= 8192) { "问题为空或过长" }
             return JSONObject().apply {
                 put("model", BuildConfig.DOUBAO_CHAT_MODEL)
@@ -202,8 +202,11 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
                 put("store", true) // previous_response_id 需要平台保存对应上下文。
                 put("thinking", JSONObject().put("type", "disabled"))
                 put("max_output_tokens", 2048)
-                // 显式使用普通文本输出，JSON 由提示词约定，不沿用旧轮的结构化格式。
-                put("text", JSONObject().put("format", JSONObject().put("type", "text")))
+                // 只有已经独立判断为操作的正式请求才使用 Schema。
+                val format = if (outputSchema == null) JSONObject().put("type", "text") else JSONObject()
+                    .put("type", "json_schema").put("name", "assistant_actions")
+                    .put("strict", true).put("schema", outputSchema)
+                put("text", JSONObject().put("format", format))
                 put("input", JSONArray().put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", text)))))
                 if (!previousId.isNullOrBlank()) put("previous_response_id", previousId)

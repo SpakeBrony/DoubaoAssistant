@@ -114,7 +114,7 @@ class DoubaoAsrRecognizerTest {
         ConversationRepository.reset()
         val application: Application = RuntimeEnvironment.getApplication()
         val requests = mutableListOf<String>()
-        val coordinator = ConversationCoordinator(backgroundScope, application::getString, judgeOperation = { true }) { text, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, application::getString, judgeOperation = { true }) { text, _, _ -> flow {
             requests += text
             emit(ResponseProgress("回答"))
             awaitCancellation()

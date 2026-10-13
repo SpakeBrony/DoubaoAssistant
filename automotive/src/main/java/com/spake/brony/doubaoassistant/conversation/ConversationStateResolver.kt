@@ -19,7 +19,7 @@ internal object ConversationStateResolver {
         ended -> ConversationPhase.ENDED
         uiError != null || kws.status == ListeningStatus.ERROR || asr.error != null ||
             chatError != null || phase == ConversationPhase.ERROR -> ConversationPhase.ERROR
-        phase == ConversationPhase.THINKING || phase == ConversationPhase.SPEAKING -> phase
+        phase == ConversationPhase.THINKING || phase == ConversationPhase.EXECUTING || phase == ConversationPhase.SPEAKING -> phase
         kws.chatPaused || kws.mode == AssistantMode.MUTED ||
             kws.status == ListeningStatus.LISTENING && !kws.asrRequested -> ConversationPhase.PAUSED
         else -> phase

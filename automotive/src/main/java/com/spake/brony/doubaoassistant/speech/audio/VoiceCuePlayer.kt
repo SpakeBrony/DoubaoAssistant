@@ -54,7 +54,7 @@ class VoiceCuePlayer(context: Context) : AutoCloseable {
         val sample = pending?.takeIf { it in loaded } ?: return
         pending = null
         // 短提示不另抢音频焦点，避免取消当前 AI 播报。
-        stream = player.play(sample, 0.7f, 0.7f, 1, 0, 1f)
+        stream = player.play(sample, 1.0f, 1.0f, 1, 0, 1f)
         if (stream == 0) Log.e("VoiceCuePlayer", "SoundPool play returned 0: sample=$sample")
     }
 

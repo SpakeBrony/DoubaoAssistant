@@ -38,6 +38,8 @@
     <string name="chat_response_failed">豆包回复失败，请重新提问</string>
     <string name="chat_response_incomplete">豆包回复被截断，请缩短问题或重新提问</string>
     <string name="voice_reply_style">AI回复习惯</string>
+    <string name="voice_ai_control">AI操控功能</string>
+    <string name="voice_ai_control_detail">开启后可识别并执行操作；关闭后只进行普通聊天。</string>
     <string name="voice_reply_style_minimal">极简</string>
     <string name="voice_reply_style_simple">简单</string>
     <string name="voice_reply_style_detailed">详细</string>

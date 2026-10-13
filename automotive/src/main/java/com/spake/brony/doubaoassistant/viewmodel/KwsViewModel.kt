@@ -30,6 +30,7 @@ data class KwsUiState(
     val appearance: Appearance = Appearance.SYSTEM,
     val speed: Int = 1,
     val replyStyle: ReplyStyle = ReplyStyle.SIMPLE,
+    val aiControlEnabled: Boolean = true,
     val answerMode: AnswerMode = AnswerMode.CHAT,
     val assistantName: String = AssistantName.DEFAULT,
     val backgroundChat: Boolean = false,
@@ -50,7 +51,8 @@ data class KwsUiState(
         snapshot, asr, conversation.phase, chatError, errorMessage, ended)
 
     val isPaused: Boolean get() = phase == ConversationPhase.PAUSED || phase == ConversationPhase.ENDED || phase == ConversationPhase.ERROR
-    val isReplying: Boolean get() = conversation.phase == ConversationPhase.THINKING || conversation.phase == ConversationPhase.SPEAKING
+    val isReplying: Boolean get() = conversation.phase == ConversationPhase.THINKING ||
+        conversation.phase == ConversationPhase.EXECUTING || conversation.phase == ConversationPhase.SPEAKING
     val canControlChat: Boolean get() = !ended && (isListening || isReplying || snapshot.status == ListeningStatus.STOPPED)
     val waveformLevel: Float get() = if (isListening && snapshot.asrRequested && !isPaused &&
         asr.conversation.liveText.isNotEmpty()) audioLevel else 0f
@@ -124,6 +126,10 @@ class KwsViewModel(
 
     fun setReplyStyle(style: ReplyStyle) {
         mutableUiState.value = mutableUiState.value.copy(replyStyle = style)
+    }
+
+    fun setAiControlEnabled(enabled: Boolean) {
+        mutableUiState.value = mutableUiState.value.copy(aiControlEnabled = enabled)
     }
 
     fun setAnswerMode(mode: AnswerMode) {

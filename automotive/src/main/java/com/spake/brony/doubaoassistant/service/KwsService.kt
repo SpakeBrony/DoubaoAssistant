@@ -125,6 +125,7 @@ class KwsService : Service() {
             },
             lastResponseId = history::lastResponseId,
             replyInstruction = { preferences.replyStyle.instruction },
+            aiControlEnabled = { preferences.aiControlEnabled },
             answerMode = { preferences.answerMode },
             onSingleQuestionRecognized = ::stopSingleAnswerRecognition,
             executeOperation = operationExecutor::execute,

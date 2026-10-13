@@ -93,7 +93,7 @@ class KwsServiceAsrTest {
         }
         val coordinator = ConversationCoordinator(backgroundScope, service::getString, tts,
             answerMode = { com.spake.brony.doubaoassistant.data.model.AnswerMode.SINGLE },
-            onSingleQuestionRecognized = { stop.invoke(service) }, judgeOperation = { true }) { text, _ ->
+            onSingleQuestionRecognized = { stop.invoke(service) }, judgeOperation = { true }) { text, _, _ ->
             questions += text
             updates.take(2)
         }
@@ -174,7 +174,7 @@ class KwsServiceAsrTest {
         val finished = service.javaClass.getDeclaredMethod("finishClosedMicrophone").apply { isAccessible = true }
         val conversation = ConversationCoordinator(backgroundScope, service::getString, tts,
             saveMessage = { saved += it }, onAsrCommand = { execute.invoke(service, it, null) },
-            onReplyFinished = { finished.invoke(service) }, judgeOperation = { true }) { text, _ -> flow {
+            onReplyFinished = { finished.invoke(service) }, judgeOperation = { true }) { text, _, _ -> flow {
                 requests += text
                 emit(ResponseProgress("正常回复", "response_1"))
             } }
@@ -261,7 +261,7 @@ class KwsServiceAsrTest {
         val execute = service.javaClass.getDeclaredMethod("executeVoiceCommand", AsrCommand::class.java, String::class.java)
             .apply { isAccessible = true }
         val coordinator = ConversationCoordinator(backgroundScope, service::getString, tts,
-            saveMessage = { saved += it }, onAsrCommand = { execute.invoke(service, it, null) }, judgeOperation = { true }) { _, _ -> requests++; flow { } }
+            saveMessage = { saved += it }, onAsrCommand = { execute.invoke(service, it, null) }, judgeOperation = { true }) { _, _, _ -> requests++; flow { } }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(coordinator))
         try {
@@ -308,7 +308,7 @@ class KwsServiceAsrTest {
             val finished = service.javaClass.getDeclaredMethod("finishClosedMicrophone").apply { isAccessible = true }
             val conversation = ConversationCoordinator(backgroundScope, service::getString, tts,
                 assistantName = { preferences.assistantName }, onAsrCommand = { execute.invoke(service, it, null) },
-                onReplyFinished = { finished.invoke(service) }, judgeOperation = { true }) { _, _ -> requests++; flow { } }
+                onReplyFinished = { finished.invoke(service) }, judgeOperation = { true }) { _, _, _ -> requests++; flow { } }
             service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
                 .set(service, lazyOf(conversation))
             fun field(key: String) = service.javaClass.getDeclaredField(key).apply { isAccessible = true }
@@ -387,7 +387,7 @@ class KwsServiceAsrTest {
         val finished = service.javaClass.getDeclaredMethod("finishClosedMicrophone").apply { isAccessible = true }
         val conversation = ConversationCoordinator(backgroundScope, service::getString, tts,
             saveMessage = { saved += it }, onAsrCommand = { execute.invoke(service, it, null) },
-            onReplyFinished = { finished.invoke(service) }, judgeOperation = { true }) { _, _ -> requests++; updates.take(2) }
+            onReplyFinished = { finished.invoke(service) }, judgeOperation = { true }) { _, _, _ -> requests++; updates.take(2) }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(conversation))
         val recognition = service.javaClass.getDeclaredMethod("onRecognition", AsrSnapshot::class.java)
@@ -460,7 +460,7 @@ class KwsServiceAsrTest {
             override fun finish() = Unit
             override fun cancel() { cancellations++ }
         }
-        val conversation = ConversationCoordinator(backgroundScope, service::getString, tts, judgeOperation = { true }) { _, _ -> updates }
+        val conversation = ConversationCoordinator(backgroundScope, service::getString, tts, judgeOperation = { true }) { _, _, _ -> updates }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(conversation))
         fun field(name: String) = service.javaClass.getDeclaredField(name).apply { isAccessible = true }
@@ -531,7 +531,7 @@ class KwsServiceAsrTest {
         val controller = Robolectric.buildService(KwsService::class.java)
         val service = controller.get()
         val recorder = MicrophoneRecorder(service::getString, 16000)
-        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _ -> flow { } }
+        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _, _ -> flow { } }
         fun field(name: String) = service.javaClass.getDeclaredField(name).apply { isAccessible = true }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(conversation))
@@ -586,7 +586,7 @@ class KwsServiceAsrTest {
         val service = controller.get()
         val history = ChatHistoryRepository(service) { fail("History write failed") }
         val conversation = ConversationCoordinator(backgroundScope, service::getString,
-            saveMessage = history::save, createTopic = history::createTopic, judgeOperation = { true }) { _, _ -> flow { } }
+            saveMessage = history::save, createTopic = history::createTopic, judgeOperation = { true }) { _, _, _ -> flow { } }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(conversation))
         service.javaClass.declaredFields.first { it.name.startsWith("history$") }.apply { isAccessible = true }
@@ -637,7 +637,7 @@ class KwsServiceAsrTest {
         val service = controller.get()
         val preferences = AssistantPreferences(service)
         fun field(name: String) = service.javaClass.getDeclaredField(name).apply { isAccessible = true }
-        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _ -> flow { } }
+        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _, _ -> flow { } }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(conversation))
         val publish = service.javaClass.getDeclaredMethod("publish", KwsSnapshot::class.java).apply { isAccessible = true }
@@ -744,7 +744,7 @@ class KwsServiceAsrTest {
         val service = controller.get()
         val preferences = AssistantPreferences(service)
         fun field(name: String) = service.javaClass.getDeclaredField(name).apply { isAccessible = true }
-        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _ -> flow { } }
+        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _, _ -> flow { } }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(conversation))
         val publish = service.javaClass.getDeclaredMethod("publish", KwsSnapshot::class.java).apply { isAccessible = true }
@@ -791,7 +791,7 @@ class KwsServiceAsrTest {
         val service = controller.get()
         val preferences = AssistantPreferences(service)
         var cancelled = false
-        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _ -> flow {
+        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _, _ -> flow {
             try { emit(ResponseProgress("继续回复")); awaitCancellation() }
             finally { cancelled = true }
         } }
@@ -859,7 +859,7 @@ class KwsServiceAsrTest {
         history.createTopic(archived)
         history.save(ConversationMessage("更早的聊天", false, "archived_user", 2, archived.id))
         val conversation = ConversationCoordinator(backgroundScope, service::getString,
-            saveMessage = history::save, createTopic = history::createTopic, judgeOperation = { true }) { _, _ -> flow {
+            saveMessage = history::save, createTopic = history::createTopic, judgeOperation = { true }) { _, _, _ -> flow {
             try { emit(ResponseProgress("尚未结束的旧回复")); awaitCancellation() }
             finally { cancelled = true }
         } }
@@ -935,7 +935,7 @@ class KwsServiceAsrTest {
             override fun cancel() { ttsCancelled++ }
         }
         val conversation = ConversationCoordinator(backgroundScope, service::getString, speech = tts,
-            saveMessage = { saved += it }, createTopic = { topics += it }, judgeOperation = { true }) { text, id -> flow {
+            saveMessage = { saved += it }, createTopic = { topics += it }, judgeOperation = { true }) { text, id, _ -> flow {
             requests += text to id
             try { emit(ResponseProgress("旧回复")); awaitCancellation() }
             finally { cancelled++ }
@@ -1008,7 +1008,7 @@ class KwsServiceAsrTest {
                 override fun finish() = Unit
                 override fun cancel() { ttsCancelled++ }
             }
-            val conversation = ConversationCoordinator(backgroundScope, service::getString, tts, judgeOperation = { true }) { _, _ ->
+            val conversation = ConversationCoordinator(backgroundScope, service::getString, tts, judgeOperation = { true }) { _, _, _ ->
                 requests++
                 updates.take(2)
             }
@@ -1084,7 +1084,7 @@ class KwsServiceAsrTest {
             preferences.assistantName = name
             preferences.backgroundChat = keepChat
             var cancelled = 0
-            val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _ -> flow {
+            val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _, _ -> flow {
                 try { emit(ResponseProgress("正在回答")); awaitCancellation() }
                 finally { cancelled++ }
             } }
@@ -1166,7 +1166,7 @@ class KwsServiceAsrTest {
             override fun cancel() = Unit
         }
         val conversation = ConversationCoordinator(backgroundScope, service::getString, tts,
-            saveMessage = history::save, createTopic = history::createTopic, judgeOperation = { true }) { _, _ -> requests++; flow { } }
+            saveMessage = history::save, createTopic = history::createTopic, judgeOperation = { true }) { _, _, _ -> requests++; flow { } }
         service.javaClass.declaredFields.first { it.name.startsWith("conversation") }.apply { isAccessible = true }
             .set(service, lazyOf(conversation))
         service.javaClass.declaredFields.first { it.name.startsWith("history$") }.apply { isAccessible = true }
@@ -1261,7 +1261,7 @@ class KwsServiceAsrTest {
                 override fun finish() = Unit
                 override fun cancel() { ttsCancelled++ }
             }
-            val conversation = ConversationCoordinator(backgroundScope, service::getString, tts, judgeOperation = { true }) { _, _ -> flow {
+            val conversation = ConversationCoordinator(backgroundScope, service::getString, tts, judgeOperation = { true }) { _, _, _ -> flow {
                 requests++
                 try { emit(ResponseProgress("正在回答")); awaitCancellation() }
                 finally { cancelled++ }
@@ -1344,7 +1344,7 @@ class KwsServiceAsrTest {
         val preferences = AssistantPreferences(service)
         var cancelled = 0
         var confirmedVersion = 0L
-        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _ -> flow {
+        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _, _ -> flow {
             try { emit(ResponseProgress("正在回答")); awaitCancellation() }
             finally { cancelled++ }
         } }
@@ -1432,7 +1432,7 @@ class KwsServiceAsrTest {
         val controller = Robolectric.buildService(KwsService::class.java)
         val service = controller.get()
         var cancelled = false
-        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _ -> flow {
+        val conversation = ConversationCoordinator(backgroundScope, service::getString, judgeOperation = { true }) { _, _, _ -> flow {
             try {
                 emit(ResponseProgress("回复正在生成"))
                 awaitCancellation()

@@ -72,6 +72,7 @@ class MainActivity : BaseActivity() {
         binding.conversation.onReplay = ::replayReply
         viewModel.loadPreferences(preferences.appearance, preferences.captions, preferences.speed, preferences.assistantName)
         viewModel.setReplyStyle(preferences.replyStyle)
+        viewModel.setAiControlEnabled(preferences.aiControlEnabled)
         viewModel.setAnswerMode(preferences.answerMode)
         viewModel.setOverlayStyle(preferences.overlayStyle)
         viewModel.setBackgroundChat(preferences.backgroundChat)
@@ -272,6 +273,12 @@ class MainActivity : BaseActivity() {
         viewModel.setReplyStyle(style)
     }
 
+    fun toggleAiControl() {
+        val enabled = !viewModel.uiState.value.aiControlEnabled
+        preferences.aiControlEnabled = enabled
+        viewModel.setAiControlEnabled(enabled)
+    }
+
     fun setAnswerMode(mode: AnswerMode) {
         preferences.answerMode = mode
         viewModel.setAnswerMode(mode)
@@ -348,6 +355,7 @@ class MainActivity : BaseActivity() {
             }
             ConversationPhase.LISTENING -> R.string.voice_listening
             ConversationPhase.THINKING -> R.string.voice_thinking
+            ConversationPhase.EXECUTING -> R.string.voice_executing
             ConversationPhase.SPEAKING -> R.string.voice_speaking
             ConversationPhase.PAUSED -> if (!state.isListening) R.string.voice_stopped else R.string.voice_paused
             ConversationPhase.ENDED -> R.string.voice_ended
@@ -408,10 +416,10 @@ class MainActivity : BaseActivity() {
             settingsHeader.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = dp(if (dimensions.compact || dimensions.ultraWide) 0f else 26f) }
             settingsTitle.size((dimensions.width * .02f).coerceIn(25f, 38f))
             settingsTitle.typeface = Typeface.create(settingsTitle.typeface, 500, false)
-            listOf(nameLabel, appearanceLabel, layoutLabel, captionsLabel, speedLabel, replyStyleLabel, answerModeLabel, credentialsLabel, permissionLabel, backgroundChatLabel, overlayStyleLabel, historyLabel).forEach { it.size(dimensions.settingLabel) }
+            listOf(nameLabel, appearanceLabel, layoutLabel, captionsLabel, speedLabel, replyStyleLabel, aiControlLabel, answerModeLabel, credentialsLabel, permissionLabel, backgroundChatLabel, overlayStyleLabel, historyLabel).forEach { it.size(dimensions.settingLabel) }
             nameValue.size(dimensions.settingLabel)
-            listOf(nameDetail, captionsDetail, answerModeDetail, credentialsDetail, permissionDetail, backgroundChatDetail, historyDetail).forEach { it.size(dimensions.settingDetail) }
-            listOf(nameSection, appearanceSection, layoutSection, captionsSection, speedSection, replyStyleSection, answerModeSection, credentialsSection, permissionSection, backgroundChatSection, historySection).forEach { it.setPadding(0, dp(dimensions.settingSpacing), 0, dp(dimensions.settingSpacing)) }
+            listOf(nameDetail, captionsDetail, aiControlDetail, answerModeDetail, credentialsDetail, permissionDetail, backgroundChatDetail, historyDetail).forEach { it.size(dimensions.settingDetail) }
+            listOf(nameSection, appearanceSection, layoutSection, captionsSection, speedSection, replyStyleSection, aiControlSection, answerModeSection, credentialsSection, permissionSection, backgroundChatSection, historySection).forEach { it.setPadding(0, dp(dimensions.settingSpacing), 0, dp(dimensions.settingSpacing)) }
             overlayStyleSection.setPadding(0, 0, 0, dp(dimensions.settingSpacing))
             appearanceOptions.updateLayoutParams<ViewGroup.MarginLayoutParams> { this.height = dp(dimensions.appearanceHeight); topMargin = dp(if (dimensions.compact || dimensions.ultraWide) 14f else 23f) }
             speedOptions.updateLayoutParams<ViewGroup.MarginLayoutParams> { topMargin = dp(if (dimensions.compact || dimensions.ultraWide) 14f else 23f) }
