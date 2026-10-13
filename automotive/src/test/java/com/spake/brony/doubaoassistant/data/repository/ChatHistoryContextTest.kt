@@ -28,7 +28,7 @@ class ChatHistoryContextTest {
         val json = """{"intent":"set_temperature","slots":{"temperature":28},"success_reply":"空调已调到28度","failure_reply":"空调调节失败"}"""
         val coordinator = ConversationCoordinator(backgroundScope, context::getString,
             saveMessage = history::save, createTopic = history::createTopic,
-            lastResponseId = history::lastResponseId) { text, id -> flow {
+            lastResponseId = history::lastResponseId, judgeOperation = { true }) { text, id -> flow {
             if (text.startsWith("空调")) {
                 emit(ResponseProgress("{"))
                 emit(ResponseProgress(json, "response_json"))
@@ -41,7 +41,7 @@ class ChatHistoryContextTest {
             assertNull(requests.receive().second)
             val topic = checkNotNull(ConversationRepository.activeTopic)
             coordinator.onTextSubmitted("空调调到28度")
-            assertEquals("response_chat", requests.receive().second)
+            assertNull(requests.receive().second)
             val rows = history.latest(topic.id)
             val result = rows.last()
             assertEquals("空调调节失败", result.text)
@@ -70,7 +70,7 @@ class ChatHistoryContextTest {
         val requests = Channel<String>(Channel.UNLIMITED)
         val coordinator = ConversationCoordinator(backgroundScope, context::getString,
             saveMessage = history::save, createTopic = history::createTopic, lastResponseId = history::lastResponseId,
-            replyInstruction = { preferences.replyStyle.instruction }) { text, _ -> flow {
+            replyInstruction = { preferences.replyStyle.instruction }, judgeOperation = { true }) { text, _ -> flow {
                 emit(ResponseProgress("正常回答", "response_${text.length}"))
                 requests.send(text)
             } }
@@ -108,7 +108,7 @@ class ChatHistoryContextTest {
         val requests = Channel<Pair<String, String?>>(Channel.UNLIMITED)
         var nextResponse = 0
         fun coordinator(history: ChatHistoryRepository) = ConversationCoordinator(backgroundScope, context::getString,
-            saveMessage = history::save, createTopic = history::createTopic, lastResponseId = history::lastResponseId) { text, id -> flow {
+            saveMessage = history::save, createTopic = history::createTopic, lastResponseId = history::lastResponseId, judgeOperation = { true }) { text, id -> flow {
             val responseId = "response_${++nextResponse}"
             emit(ResponseProgress("回复$text"))
             emit(ResponseProgress("回复$text", responseId))

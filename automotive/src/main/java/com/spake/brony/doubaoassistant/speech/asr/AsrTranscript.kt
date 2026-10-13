@@ -59,5 +59,10 @@ internal class AsrTranscript(initial: ConversationContent = ConversationContent(
 
     fun clearLiveText() { content = content.copy(phase = ConversationPhase.READY, liveText = "") }
 
+    fun clearPendingText() {
+        clearLiveText()
+        confirmedText = ""
+    }
+
     companion object { private const val MAX_MESSAGES = 40 }
 }

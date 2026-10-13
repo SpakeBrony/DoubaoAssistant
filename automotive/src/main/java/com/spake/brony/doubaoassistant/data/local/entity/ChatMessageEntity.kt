@@ -22,6 +22,7 @@ internal data class ChatMessageEntity(
     @ColumnInfo(name = "is_assistant") val role: Int,
     @ColumnInfo(name = "previous_response_id") val previousResponseId: String?,
     @PrimaryKey(autoGenerate = true) @ColumnInfo(name = "_id") val id: Long = 0,
+    @ColumnInfo(name = "json_message") val jsonMessage: String? = null,
 ) {
     init {
         require(messageId.isNotBlank() && messageId.length <= 64 && timeMillis > 0)
@@ -33,5 +34,6 @@ internal data class ChatMessageEntity(
     }
 
     fun toMessage(): ConversationMessage = ConversationMessage(
-        content, role, messageId, timeMillis, topicId, previousResponseId)
+        content, role, messageId, timeMillis, topicId, previousResponseId,
+        jsonMessage)
 }

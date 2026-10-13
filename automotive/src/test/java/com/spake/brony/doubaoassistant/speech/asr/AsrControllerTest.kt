@@ -86,19 +86,35 @@ class AsrControllerTest {
     @Test
     fun muteSurvivesPageChangesButResumeCanUnmuteInForegroundAndBackground() {
         for (visible in listOf(true, false)) {
-            for (command in KwsCommand.entries) {
-                val controller = AsrController()
-                controller.start(uiVisible = visible)
-                assertTrue(controller.onCommand(AsrCommand.STOP_REPLY))
-                controller.onUiVisibilityChanged(!visible)
-                controller.onUiVisibilityChanged(visible)
-                assertEquals(AssistantMode.MUTED, controller.mode)
-                assertFalse(controller.asrRequested)
-                assertTrue(controller.onCommand(command))
-                assertEquals(AssistantMode.AWAKE, controller.mode)
-                assertTrue(controller.asrRequested)
-                if (visible) assertTrue(controller.onCommand(KwsCommand.RESUME))
-            }
+            val controller = AsrController()
+            controller.start(uiVisible = visible)
+            assertTrue(controller.onCommand(AsrCommand.STOP_REPLY))
+            controller.onUiVisibilityChanged(!visible)
+            controller.onUiVisibilityChanged(visible)
+            assertEquals(AssistantMode.MUTED, controller.mode)
+            assertFalse(controller.asrRequested)
+            assertTrue(controller.onCommand(KwsCommand.RESUME))
+            assertEquals(AssistantMode.AWAKE, controller.mode)
+            assertTrue(controller.asrRequested)
+            if (visible) assertTrue(controller.onCommand(KwsCommand.RESUME))
+        }
+    }
+
+    @Test fun kwsStopPausesCloudRecognitionButKeepsResumeAvailable() {
+        for (visible in listOf(true, false)) {
+            val controller = AsrController()
+            controller.start(visible)
+            controller.onCommand(KwsCommand.RESUME)
+            assertTrue(controller.asrRequested)
+            assertTrue(controller.onCommand(KwsCommand.STOP_REPLY))
+            assertEquals(AssistantMode.MUTED, controller.mode)
+            assertFalse(controller.asrRequested)
+            controller.onUiVisibilityChanged(!visible)
+            assertEquals(AssistantMode.MUTED, controller.mode)
+            assertTrue(controller.onCommand(KwsCommand.RESUME))
+            assertTrue(controller.asrRequested)
+            controller.stop()
+            assertFalse(controller.onCommand(KwsCommand.STOP_REPLY))
         }
     }
 

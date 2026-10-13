@@ -40,7 +40,7 @@ class AsrController {
 
     fun onCommand(command: KwsCommand): Boolean {
         if (!listening) return false
-        mode = AssistantMode.AWAKE
+        mode = command.controlCommand?.let(mode::after) ?: AssistantMode.AWAKE
         return true
     }
 

@@ -7,6 +7,7 @@ data class ConversationMessage(
     val timeMillis: Long = 0,
     val topicId: String = "",
     val previousResponseId: String? = null,
+    val jsonMessage: String? = null,
 ) {
     val isAssistant: Boolean get() = role == ASSISTANT
     val isSystem: Boolean get() = role == SYSTEM

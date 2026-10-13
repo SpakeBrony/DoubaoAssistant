@@ -6,6 +6,7 @@ import android.media.AudioAttributes
 import android.media.SoundPool
 import android.util.Log
 import androidx.annotation.MainThread
+import androidx.annotation.RawRes
 import com.spake.brony.doubaoassistant.R
 
 @MainThread
@@ -13,7 +14,7 @@ class VoiceCuePlayer(context: Context) : AutoCloseable {
     private var pool: SoundPool? = SoundPool.Builder()
         .setMaxStreams(1)
         .setAudioAttributes(AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
         .build()
     private val samples = mutableMapOf<Int, Int>()
@@ -33,16 +34,18 @@ class VoiceCuePlayer(context: Context) : AutoCloseable {
                 if (pending == sample) pending = null
             }
         }
-        val sample = player.load(context.applicationContext, R.raw.haode, 1)
-        if (sample != 0) samples[R.raw.haode] = sample
-        else Log.e("VoiceCuePlayer", "SoundPool load returned 0: resource=${R.raw.haode}")
+        for (resource in listOf(R.raw.haode, R.raw.wozai)) {
+            val sample = player.load(context.applicationContext, resource, 1)
+            if (sample != 0) samples[resource] = sample
+            else Log.e("VoiceCuePlayer", "SoundPool load returned 0: resource=$resource")
+        }
     }
 
-    fun play() {
+    fun play(@RawRes resource: Int = R.raw.haode) {
         if (pool == null) return
         stop()
         // 首次命中早于异步加载完成时，只保留最新口令，不排队播报旧口令。
-        pending = samples[R.raw.haode]
+        pending = samples[resource]
         playPending()
     }
 

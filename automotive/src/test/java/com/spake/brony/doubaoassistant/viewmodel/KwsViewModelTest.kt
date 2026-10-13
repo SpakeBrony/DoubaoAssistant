@@ -33,11 +33,16 @@ class KwsViewModelTest {
         val state = KwsUiState(snapshot = KwsSnapshot(status = ListeningStatus.STOPPED))
         assertEquals(ConversationPhase.READY, state.phase)
         assertFalse(state.isPaused)
+        assertTrue(state.canTypeMessage)
         assertTrue(state.canControlChat)
         val paused = state.copy(snapshot = state.snapshot.copy(chatPaused = true))
         assertTrue(paused.isPaused)
         assertTrue(paused.canControlChat)
         assertFalse(paused.isListening)
+        assertFalse(paused.canTypeMessage)
+        assertFalse(paused.copy(conversation = ConversationContent(phase = ConversationPhase.SPEAKING)).canTypeMessage)
+        assertFalse(state.copy(snapshot = KwsSnapshot(status = ListeningStatus.LISTENING, asrRequested = true)).canTypeMessage)
+        assertFalse(state.copy(ended = true).canTypeMessage)
         assertFalse(state.copy(ended = true).canControlChat)
     }
 

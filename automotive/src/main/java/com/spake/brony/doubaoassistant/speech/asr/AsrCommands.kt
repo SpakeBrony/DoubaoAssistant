@@ -5,12 +5,12 @@ import com.spake.brony.doubaoassistant.R
 import com.spake.brony.doubaoassistant.data.model.AsrCommand
 
 internal object AsrCommands {
-    data class Rule(val command: AsrCommand, val keywords: List<String>, @StringRes val reply: Int? = null)
+    data class Rule(val command: AsrCommand, val keywords: List<String>, @StringRes val reply: Int = R.string.voice_command_stopped)
 
     val rules = listOf(
         Rule(AsrCommand.CLOSE_MICROPHONE, listOf("关闭麦克风")),
-        Rule(AsrCommand.STOP_REPLY, listOf("闭嘴", "别说话"), R.string.voice_command_stopped),
-        Rule(AsrCommand.RETURN_HOME, listOf("退下", "退出", "下去吧", "下去"), R.string.voice_command_returned_home),
+        Rule(AsrCommand.STOP_REPLY, listOf("闭嘴", "别说话")),
+        Rule(AsrCommand.RETURN_HOME, listOf("退下", "退出", "下去吧", "下去")),
     )
 
     fun match(text: String, name: String): Rule? {

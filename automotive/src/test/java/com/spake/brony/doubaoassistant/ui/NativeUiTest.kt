@@ -34,6 +34,7 @@ import com.spake.brony.doubaoassistant.data.model.ConversationPhase
 import com.spake.brony.doubaoassistant.data.model.KwsSnapshot
 import com.spake.brony.doubaoassistant.data.model.ListeningStatus
 import com.spake.brony.doubaoassistant.data.model.ReplyStyle
+import com.spake.brony.doubaoassistant.data.model.OverlayStyle
 import com.spake.brony.doubaoassistant.data.repository.AssistantPreferences
 import com.spake.brony.doubaoassistant.data.repository.KwsRepository
 import com.spake.brony.doubaoassistant.data.repository.ConversationRepository
@@ -197,6 +198,13 @@ class NativeUiTest {
             shadowOf(Looper.getMainLooper()).idle()
             binding.executePendingBindings()
             assertEquals("恢复聊天", binding.toggleChat.contentDescription)
+            assertEquals(View.GONE, binding.messageInput.visibility)
+            assertEquals(View.VISIBLE, binding.listeningStatus.visibility)
+            assertEquals(activity.getString(R.string.voice_paused), binding.listeningStatus.text.toString())
+            binding.messageInput.setText("暂停时不应发送")
+            binding.messageInput.onEditorAction(EditorInfo.IME_ACTION_SEND)
+            assertNull(shadowOf(activity).nextStartedService)
+            assertEquals("暂停时不应发送", binding.messageInput.text.toString())
             assertEquals(activity.getString(R.string.voice_paused), activity.statusText(ViewModelProvider(activity)[KwsViewModel::class.java].uiState.value))
             binding.toggleChat.performClick()
             assertEquals(KwsService.ACTION_RESUME, shadowOf(activity).nextStartedService.action)
@@ -447,9 +455,17 @@ class NativeUiTest {
             activity.openSettings()
             binding.executePendingBindings()
             assertFalse(binding.settings.backgroundChatSwitch.isChecked)
+            assertEquals(View.GONE, binding.settings.overlayStyleSection.visibility)
             binding.settings.backgroundChatSwitch.performClick()
             binding.executePendingBindings()
             assertTrue(binding.settings.backgroundChatSwitch.isChecked)
+            assertEquals(View.VISIBLE, binding.settings.overlayStyleSection.visibility)
+            assertTrue(binding.settings.overlayStyleDetailed.isSelected)
+            binding.settings.overlayStyleCompact.performClick()
+            binding.executePendingBindings()
+            assertTrue(binding.settings.overlayStyleCompact.isSelected)
+            assertFalse(binding.settings.overlayStyleDetailed.isSelected)
+            assertEquals(OverlayStyle.COMPACT, preferences.overlayStyle)
             assertTrue(AssistantPreferences(application).backgroundChat)
             assertEquals(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, shadowOf(activity).nextStartedActivity.action)
             assertNull(shadowOf(activity).nextStartedService)
@@ -460,9 +476,16 @@ class NativeUiTest {
             activity.openSettings()
             binding.executePendingBindings()
             assertTrue(binding.settings.backgroundChatSwitch.isChecked)
+            assertTrue(binding.settings.overlayStyleCompact.isSelected)
+            binding.settings.overlayStyleDetailed.performClick()
+            binding.executePendingBindings()
+            assertTrue(binding.settings.overlayStyleDetailed.isSelected)
+            assertFalse(binding.settings.overlayStyleCompact.isSelected)
+            assertEquals(OverlayStyle.DETAILED, preferences.overlayStyle)
             binding.settings.backgroundChatSwitch.performClick()
             binding.executePendingBindings()
             assertFalse(binding.settings.backgroundChatSwitch.isChecked)
+            assertEquals(View.GONE, binding.settings.overlayStyleSection.visibility)
             assertFalse(AssistantPreferences(application).backgroundChat)
             assertNull(shadowOf(activity).nextStartedService)
             assertNull(shadowOf(activity).nextStartedActivity)

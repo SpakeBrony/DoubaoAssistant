@@ -6,10 +6,12 @@
         android:background="@drawable/voice_overlay_background"
         android:elevation="8dp">
         <com.spake.brony.doubaoassistant.ui.widget.AmbientBackgroundView
+            android:id="@+id/overlay_background"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:importantForAccessibility="no" />
-        <LinearLayout android:layout_width="match_parent"
+        <LinearLayout android:id="@+id/overlay_body"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
             android:padding="12dp">
@@ -35,13 +37,15 @@
                 android:layout_weight="1"
                 android:paddingTop="12dp"
                 android:contentDescription="@string/voice_conversation" />
-            <View android:layout_width="match_parent"
+            <View android:id="@+id/overlay_divider"
+                android:layout_width="match_parent"
                 android:layout_height="1dp"
                 android:layout_marginStart="12dp"
                 android:layout_marginEnd="12dp"
                 android:background="@color/voice_line"
                 android:importantForAccessibility="no" />
-            <LinearLayout android:layout_width="match_parent"
+            <LinearLayout android:id="@+id/overlay_controls"
+                android:layout_width="match_parent"
                 android:layout_height="60dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
@@ -60,6 +64,19 @@
                     android:layout_height="32dp"
                     android:layout_weight="1"
                     android:importantForAccessibility="no" />
+                <FrameLayout android:id="@+id/overlay_status"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:visibility="gone"
+                    android:contentDescription="@string/voice_overlay_minimal_idle">
+                    <View android:id="@+id/overlay_status_dot"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/voice_overlay_dot"
+                        android:importantForAccessibility="no" />
+                </FrameLayout>
                 <ImageButton android:id="@+id/overlay_toggle_chat"
                     style="@style/Voice.IconButton"
                     android:layout_width="48dp"

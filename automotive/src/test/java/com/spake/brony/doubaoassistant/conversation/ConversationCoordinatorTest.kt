@@ -52,114 +52,113 @@ class ConversationCoordinatorTest {
         override fun cancel() { cancelled++ }
     }
 
-    @Test fun singleAnswerWaitsForBothStreamAndPlaybackThenPausesOnceAndCanResume() = runTest {
+    @Test fun singleAnswerStopsInputAtConfirmedQuestionKeepsReplyAndNeedsExplicitResume() = runTest {
         val tts = FakeTts()
         val updates = MutableSharedFlow<ResponseProgress>()
-        var pauses = 0
-        lateinit var coordinator: ConversationCoordinator
-        coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            answerMode = { AnswerMode.SINGLE }, onSingleAnswerFinished = {
-                pauses++
-                coordinator.setEnabled(false)
-            }) { _, _ -> updates.take(2) }
+        var stops = 0
+        val questions = mutableListOf<String>()
+        val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
+            answerMode = { AnswerMode.SINGLE }, onSingleQuestionRecognized = { stops++ }, judgeOperation = { true }) { text, _ ->
+            questions += text
+            updates.take(2)
+        }
         coordinator.startSession()
         coordinator.setEnabled(true)
-        assertEquals(0, pauses) // 开始监听或无回复的空闲回调不能触发暂停。
-        coordinator.onTextSubmitted("问题")
+        coordinator.onAsrResult(AsrSnapshot(conversation = ConversationContent(liveText = "问题还没说完")))
+        assertEquals(0, stops)
+        coordinator.onAsrResult(speech(1, "问题"))
+        assertEquals(1, stops)
         runCurrent()
+        val cancelled = tts.cancelled
+        coordinator.onAsrResult(AsrSnapshot(conversation = ConversationContent(liveText = "后续说话不能打断")))
+        coordinator.onAsrResult(speech(2, "后续确定句也忽略"))
         updates.emit(ResponseProgress("回答"))
         updates.emit(ResponseProgress("回答", "response_1"))
         runCurrent()
-        assertEquals(0, pauses)
+        assertEquals(listOf("问题"), questions)
+        assertEquals(listOf("回答"), tts.chunks)
+        assertEquals(cancelled, tts.cancelled)
         assertTrue(coordinator.hasActiveReply)
-        val version = tts.version
-        coordinator.onTtsUpdate(version, TtsProgress(completed = true))
-        assertEquals(1, pauses)
-        assertFalse(coordinator.hasActiveReply)
-        coordinator.onTtsUpdate(version, TtsProgress(completed = true))
-        assertEquals(1, pauses)
-        coordinator.setEnabled(true)
-        coordinator.onTextSubmitted("继续聊")
-        runCurrent()
-        assertEquals(1, updates.subscriptionCount.value)
-        // 播放先结束时，也必须等待 AI 流结束。
-        updates.emit(ResponseProgress("第二轮"))
         coordinator.onTtsUpdate(tts.version, TtsProgress(completed = true))
-        assertEquals(1, pauses)
-        updates.emit(ResponseProgress("第二轮", "response_2"))
+        coordinator.onAsrResult(speech(3, "播完也不能自动监听"))
+        assertEquals(1, stops)
+        assertEquals(1, questions.size)
+        coordinator.setEnabled(true, listening = true)
+        coordinator.onAsrResult(speech(4, "第二次问题"))
+        assertEquals(2, stops)
         runCurrent()
-        assertEquals(2, pauses)
+        assertEquals(listOf("问题", "第二次问题"), questions)
     }
 
     @Test fun defaultChatKeepsListeningAndModeChangesApplyToNextQuestion() = runTest {
         var mode = AnswerMode.CHAT
-        var pauses = 0
+        var stops = 0
+        val questions = mutableListOf<String>()
         val coordinator = ConversationCoordinator(backgroundScope, getString,
-            answerMode = { mode }, onSingleAnswerFinished = { pauses++ }) { _, _ -> flow {
+            answerMode = { mode }, onSingleQuestionRecognized = { stops++ }, judgeOperation = { true }) { text, _ -> flow {
+            questions += text
             emit(ResponseProgress("回答", "response_1"))
         } }
         coordinator.startSession()
         coordinator.setEnabled(true)
-        coordinator.onTextSubmitted("聊天模式问题")
+        coordinator.onAsrResult(speech(1, "聊天模式问题"))
         mode = AnswerMode.SINGLE
         runCurrent()
-        assertEquals(0, pauses)
-        coordinator.onTextSubmitted("单次模式问题")
+        assertEquals(0, stops)
+        coordinator.onAsrResult(speech(2, "单次模式问题"))
+        assertEquals(1, stops)
         mode = AnswerMode.CHAT
         runCurrent()
-        assertEquals(1, pauses)
-        coordinator.onTextSubmitted("再次聊天")
+        coordinator.onAsrResult(speech(3, "切换模式也要先恢复"))
+        assertEquals(2, questions.size)
+        coordinator.setEnabled(true, listening = true)
+        coordinator.onAsrResult(speech(4, "再次聊天"))
         runCurrent()
-        assertEquals(1, pauses)
+        assertEquals(3, questions.size)
+        assertEquals(1, stops)
     }
 
-    @Test fun singleAnswerDoesNotAutoPauseOnCancelledFailedOrSystemReplies() = runTest {
-        val tts = FakeTts()
-        var pauses = 0
-        val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            answerMode = { AnswerMode.SINGLE }, onSingleAnswerFinished = { pauses++ }) { text, _ -> flow {
-            when (text) {
-                "等待" -> awaitCancellation()
-                "失败" -> emit(ResponseProgress(error = "测试网络错误"))
-                else -> emit(ResponseProgress("正常回复", "response_1"))
-            }
-        } }
-        coordinator.startSession()
-        coordinator.setEnabled(true)
-        coordinator.onTextSubmitted("等待")
-        runCurrent()
-        coordinator.onTextSubmitted("失败")
-        runCurrent()
-        coordinator.onTextSubmitted("播报失败")
-        runCurrent()
-        coordinator.onTtsUpdate(tts.version, TtsProgress(error = "测试播报错误"))
-        coordinator.queueAcknowledgement("好的")
-        coordinator.onTtsUpdate(tts.version, TtsProgress(completed = true))
-        val message = ConversationRepository.snapshot.value.content.messages.first { it.isAssistant }
-        coordinator.replay(message.id)
-        coordinator.onTtsUpdate(tts.version, TtsProgress(completed = true))
-        assertEquals(0, pauses)
+    @Test fun singleAnswerStopsInputEvenWhenModelOrPlaybackFails() = runTest {
+        for (modelFails in listOf(true, false)) {
+            val tts = FakeTts()
+            var stops = 0
+            var requests = 0
+            val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
+                answerMode = { AnswerMode.SINGLE }, onSingleQuestionRecognized = { stops++ }, judgeOperation = { true }) { _, _ -> flow {
+                requests++
+                if (modelFails) emit(ResponseProgress(error = "网络错误"))
+                else emit(ResponseProgress("回答", "response_1"))
+            } }
+            coordinator.setEnabled(true)
+            coordinator.onAsrResult(speech(1, "问题"))
+            assertEquals(1, stops)
+            runCurrent()
+            coordinator.onTtsUpdate(tts.version, TtsProgress(error = "播报错误"))
+            coordinator.onAsrResult(speech(2, "错误后不能自动监听"))
+            runCurrent()
+            assertEquals(1, requests)
+            assertEquals(1, stops)
+            coordinator.stopSession()
+        }
     }
 
-    @Test fun singleAnswerWaitsForQueuedAcknowledgementWithoutCountingItAsAnotherAnswer() = runTest {
-        val tts = FakeTts()
-        var pauses = 0
-        val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            answerMode = { AnswerMode.SINGLE }, onSingleAnswerFinished = { pauses++ }) { _, _ -> flow {
+    @Test fun singleAnswerDoesNotStopForLocalCommandsOrTypedMessages() = runTest {
+        var stops = 0
+        val commands = mutableListOf<AsrCommand>()
+        var requests = 0
+        val coordinator = ConversationCoordinator(backgroundScope, getString,
+            answerMode = { AnswerMode.SINGLE }, onSingleQuestionRecognized = { stops++ },
+            onAsrCommand = { commands += it }, judgeOperation = { true }) { _, _ -> flow {
+            requests++
             emit(ResponseProgress("回答", "response_1"))
         } }
-        coordinator.startSession()
         coordinator.setEnabled(true)
-        coordinator.onTextSubmitted("问题")
+        coordinator.onAsrResult(speech(1, "关闭麦克风豆包"))
+        coordinator.onTextSubmitted("键盘输入的问题")
         runCurrent()
-        coordinator.queueAcknowledgement("我退下了")
-        coordinator.onTtsUpdate(tts.version, TtsProgress(completed = true))
-        assertEquals(0, pauses)
-        coordinator.onTtsUpdate(tts.version, TtsProgress(completed = true))
-        assertEquals(1, pauses)
-        coordinator.queueAcknowledgement("好的")
-        coordinator.onTtsUpdate(tts.version, TtsProgress(completed = true))
-        assertEquals(1, pauses)
+        assertEquals(listOf(AsrCommand.CLOSE_MICROPHONE), commands)
+        assertEquals(1, requests)
+        assertEquals(0, stops)
     }
 
     @Test fun intentPromptReachesModelForSpeechAndTypedTextAndKeepsOriginalHistory() = runTest {
@@ -167,14 +166,14 @@ class ConversationCoordinatorTest {
         val commands = mutableListOf<AsrCommand>()
         val tts = FakeTts()
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            onAsrCommand = { commands += it }, replyInstruction = { "请简短回答" }) { text, _ -> flow {
+            onAsrCommand = { commands += it }, replyInstruction = { "请简短回答" }, judgeOperation = { true }) { text, _ -> flow {
             requests += text
             emit(ResponseProgress("模型生成的回答", "response_${requests.size}"))
         } }
         coordinator.startSession()
         coordinator.setEnabled(true)
-        val airConditioner = AsrIntentPrompt.configs.first()
-        val seat = AsrIntentPrompt.configs[1]
+        val airConditioner = AsrIntentPrompt.configs.first { "空调" in it.keywords }
+        val seat = AsrIntentPrompt.configs.first { "座椅" in it.keywords }
         val voiceText = "豆包，${airConditioner.keywords.first()}"
         coordinator.onAsrResult(AsrSnapshot(conversation = ConversationContent(liveText = voiceText)))
         runCurrent()
@@ -186,11 +185,16 @@ class ConversationCoordinatorTest {
         runCurrent()
         coordinator.onTextSubmitted("今天天气如何")
         runCurrent()
-        assertEquals(listOf("$voiceText\n请简短回答\n${airConditioner.prompt}",
-            "$typedText\n请简短回答\n${seat.prompt}", "今天天气如何\n请简短回答"), requests)
+        assertEquals(listOf(voiceText, typedText, "今天天气如何").map {
+            "$it\n请简短回答\n${AsrIntentPrompt.instructionFor(it)}"
+        }, requests)
         assertEquals(listOf(voiceText, typedText, "今天天气如何"),
             ConversationRepository.snapshot.value.content.messages.filter { it.role == ConversationMessage.USER }.map { it.text })
         assertEquals(List(3) { "模型生成的回答" }, tts.chunks)
+        assertTrue(ConversationRepository.snapshot.value.content.messages.filter { it.isAssistant }
+            .all { it.previousResponseId == null })
+        assertTrue(ConversationRepository.snapshot.value.content.messages.filter { it.role == ConversationMessage.USER }
+            .all { it.previousResponseId == null })
         coordinator.onTextSubmitted("豆包，关闭麦克风，${airConditioner.keywords.first()}")
         runCurrent()
         assertEquals(listOf(AsrCommand.CLOSE_MICROPHONE), commands)
@@ -205,7 +209,7 @@ class ConversationCoordinatorTest {
         val commands = mutableListOf<AsrCommand>()
         val coordinator = ConversationCoordinator(backgroundScope, getString,
             saveMessage = { saved += it }, onAsrCommand = { commands += it },
-            replyInstruction = { instructionReads++; style.instruction }) { text, _ -> flow {
+            replyInstruction = { instructionReads++; style.instruction }, judgeOperation = { true }) { text, _ -> flow {
                 requests += text
                 emit(ResponseProgress("回答", "response_${requests.size}"))
             } }
@@ -239,7 +243,7 @@ class ConversationCoordinatorTest {
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
             saveMessage = { saved[it.id] = it }, assistantName = { "小白" },
             lastResponseId = { saved.values.lastOrNull { it.previousResponseId != null }?.previousResponseId },
-            onAsrCommand = { commands += it }, replyInstruction = { ReplyStyle.SIMPLE.instruction }) { text, id -> flow {
+            onAsrCommand = { commands += it }, replyInstruction = { ReplyStyle.SIMPLE.instruction }, judgeOperation = { true }) { text, id -> flow {
             requests += text to id
             if (text.startsWith("旧问题")) {
                 try { emit(ResponseProgress("旧回复")); awaitCancellation() } finally { cancelled++ }
@@ -276,7 +280,7 @@ class ConversationCoordinatorTest {
         val saved = mutableListOf<ConversationMessage>()
         var requests = 0
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            saveMessage = { saved += it }) { _, _ -> requests++; flow { } }
+            saveMessage = { saved += it }, judgeOperation = { true }) { _, _ -> requests++; flow { } }
         coordinator.startSession()
         coordinator.setEnabled(false)
         for (text in listOf("好的", "我退下了")) {
@@ -300,7 +304,7 @@ class ConversationCoordinatorTest {
         var finished = 0
         var requests = 0
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            onReplyFinished = { finished++ }) { _, _ -> requests++; flow {
+            onReplyFinished = { finished++ }, judgeOperation = { true }) { _, _ -> requests++; flow {
             emit(ResponseProgress("当前回答", "response_1"))
         } }
         coordinator.startSession()
@@ -339,7 +343,7 @@ class ConversationCoordinatorTest {
         var idle = 0
         val questions = mutableListOf<String>()
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            onIdle = { idle++ }, onReplyFinished = { finished++ }) { text, _ ->
+            onIdle = { idle++ }, onReplyFinished = { finished++ }, judgeOperation = { true }) { text, _ ->
             questions += text
             updates.take(2)
         }
@@ -384,7 +388,7 @@ class ConversationCoordinatorTest {
 
     @Test fun reopeningInputDuringPlaybackDoesNotCancelTheReplyOrResetContext() = runTest {
         val tts = FakeTts()
-        val coordinator = ConversationCoordinator(backgroundScope, getString, tts) { _, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, getString, tts, judgeOperation = { true }) { _, _ -> flow {
             emit(ResponseProgress("还在播放的回复", "response_1"))
         } }
         coordinator.startSession()
@@ -406,7 +410,7 @@ class ConversationCoordinatorTest {
     @Test fun silenceCountsFromLatestSpeechAndRestartsOnlyAfterReplyFinishes() = runTest {
         val tts = FakeTts()
         var idle = 0
-        val coordinator = ConversationCoordinator(backgroundScope, getString, tts, onIdle = { idle++ }) { _, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, getString, tts, onIdle = { idle++ }, judgeOperation = { true }) { _, _ -> flow {
             emit(ResponseProgress("长回复", "response_1"))
         } }
         coordinator.startSession()
@@ -432,13 +436,40 @@ class ConversationCoordinatorTest {
         assertEquals(1, idle)
     }
 
+    @Test fun clearingKwsInputDiscardsOldDraftWithoutCancellingCurrentReply() = runTest {
+        val tts = FakeTts()
+        val requests = mutableListOf<String>()
+        val coordinator = ConversationCoordinator(backgroundScope, getString, tts, judgeOperation = { true }) { text, _ -> flow {
+            requests += text
+            emit(ResponseProgress("回答"))
+            awaitCancellation()
+        } }
+        coordinator.startSession()
+        coordinator.setEnabled(true)
+        coordinator.onAsrResult(speech(1, "旧问题"))
+        runCurrent()
+        coordinator.onAsrResult(AsrSnapshot(confirmedVersion = 2, confirmedText = "关",
+            conversation = ConversationContent(liveText = "闭麦克风豆包")))
+        val before = tts.cancelled
+        coordinator.clearRecognition()
+        assertEquals(before, tts.cancelled)
+        assertTrue(coordinator.hasActiveReply)
+        assertEquals("", ConversationRepository.snapshot.value.content.liveText)
+        coordinator.onAsrResult(speech(2, "关"))
+        runCurrent()
+        assertEquals(listOf("旧问题"), requests)
+        coordinator.onAsrResult(speech(3, "新问题"))
+        runCurrent()
+        assertEquals(listOf("旧问题", "新问题"), requests)
+    }
+
     @Test fun confirmedAsrCommandsSaveUserSentenceOnceButAreNotSentToModel() = runTest {
         var requests = 0
         var saves = 0
         val commands = mutableListOf<AsrCommand>()
         var name = "小白"
         val coordinator = ConversationCoordinator(backgroundScope, getString, saveMessage = { saves++ },
-            assistantName = { name }, onAsrCommand = { commands += it }) { _, _ ->
+            assistantName = { name }, onAsrCommand = { commands += it }, judgeOperation = { true }) { _, _ ->
             requests++
             flow<ResponseProgress> {}
         }
@@ -463,7 +494,7 @@ class ConversationCoordinatorTest {
         val questions = mutableListOf<String>()
         val commands = mutableListOf<AsrCommand>()
         val coordinator = ConversationCoordinator(backgroundScope, getString,
-            onAsrCommand = { commands += it }) { text, _ -> questions += text; flow { } }
+            onAsrCommand = { commands += it }, judgeOperation = { true }) { text, _ -> questions += text; flow { } }
         coordinator.startSession()
         coordinator.setEnabled(true)
         val texts = listOf("你好，豆包", "可以说话了豆包", "说话豆包", "豆包说话", "闭嘴", "退下", "关闭麦克风")
@@ -476,7 +507,7 @@ class ConversationCoordinatorTest {
         val tts = FakeTts()
         val commands = mutableListOf<AsrCommand>()
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            onAsrCommand = { commands += it }) { _, _ -> flow {
+            onAsrCommand = { commands += it }, judgeOperation = { true }) { _, _ -> flow {
             emit(ResponseProgress("继续播报", "response_1"))
         } }
         coordinator.startSession()
@@ -505,7 +536,7 @@ class ConversationCoordinatorTest {
                     assistantName = { name }, saveMessage = { saved += it }, onAsrCommand = {
                         commands += it
                         coordinator.setEnabled(true, listening = false)
-                    }) { _, _ -> requests++; updates.take(2) }
+                    }, judgeOperation = { true }) { _, _ -> requests++; updates.take(2) }
                 coordinator.startSession()
                 coordinator.setEnabled(true)
                 coordinator.onAsrResult(speech(1, "讲一个故事"))
@@ -546,7 +577,7 @@ class ConversationCoordinatorTest {
 
     @Test fun microphoneCandidateRevisedToOrdinarySpeechStillInterruptsPlayback() = runTest {
         val tts = FakeTts()
-        val coordinator = ConversationCoordinator(backgroundScope, getString, tts) { _, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, getString, tts, judgeOperation = { true }) { _, _ -> flow {
             emit(ResponseProgress("当前回答", "response_1"))
         } }
         coordinator.startSession()
@@ -566,7 +597,7 @@ class ConversationCoordinatorTest {
         val questions = mutableListOf<String>()
         val commands = mutableListOf<AsrCommand>()
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            onAsrCommand = { commands += it }) { text, _ ->
+            onAsrCommand = { commands += it }, judgeOperation = { true }) { text, _ ->
             questions += text
             flow { emit(ResponseProgress("当前回答", "response_1")) }
         }
@@ -586,7 +617,7 @@ class ConversationCoordinatorTest {
 
     @Test fun requestRotationDoesNotResetSilenceDeadlineAndManualPauseCancelsIt() = runTest {
         var idle = 0
-        val coordinator = ConversationCoordinator(backgroundScope, getString, onIdle = { idle++ }) { _, _ -> flow<ResponseProgress> {} }
+        val coordinator = ConversationCoordinator(backgroundScope, getString, onIdle = { idle++ }, judgeOperation = { true }) { _, _ -> flow<ResponseProgress> {} }
         coordinator.startSession()
         coordinator.setEnabled(true)
         runCurrent()
@@ -607,7 +638,7 @@ class ConversationCoordinatorTest {
     @Test fun waitingForModelAlsoSuspendsSilenceTimeoutAcrossAsrRequests() = runTest {
         var idle = 0
         var cancelled = false
-        val coordinator = ConversationCoordinator(backgroundScope, getString, onIdle = { idle++ }) { _, _ -> flow<ResponseProgress> {
+        val coordinator = ConversationCoordinator(backgroundScope, getString, onIdle = { idle++ }, judgeOperation = { true }) { _, _ -> flow<ResponseProgress> {
             try { awaitCancellation() } finally { cancelled = true }
         } }
         coordinator.startSession()
@@ -630,7 +661,7 @@ class ConversationCoordinatorTest {
         val saved = mutableListOf<ConversationMessage>()
         val updates = MutableSharedFlow<ResponseProgress>()
         val coordinator = ConversationCoordinator(backgroundScope, getString = getString, speech = tts,
-            saveMessage = { saved += it }, speed = { 2 }) { _, _ -> updates }
+            saveMessage = { saved += it }, speed = { 2 }, judgeOperation = { true }) { _, _ -> updates }
         coordinator.startSession()
         coordinator.setEnabled(true)
         coordinator.onAsrResult(speech(1, "讲个故事"))
@@ -657,7 +688,7 @@ class ConversationCoordinatorTest {
 
     @Test fun audioCanBeInterruptedAfterLanguageModelAlreadyCompleted() = runTest {
         val tts = FakeTts()
-        val coordinator = ConversationCoordinator(backgroundScope, getString = getString, speech = tts) { _, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, getString = getString, speech = tts, judgeOperation = { true }) { _, _ -> flow {
             emit(ResponseProgress("这是回答", "response_1"))
         } }
         coordinator.startSession()
@@ -674,7 +705,7 @@ class ConversationCoordinatorTest {
 
     @Test fun playbackCompletionReturnsToReadyWithoutClearingMessagesOrModelContext() = runTest {
         val tts = FakeTts()
-        val coordinator = ConversationCoordinator(backgroundScope, getString = getString, speech = tts) { _, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, getString = getString, speech = tts, judgeOperation = { true }) { _, _ -> flow {
             emit(ResponseProgress("这是完整的回答", "response_1"))
         } }
         coordinator.startSession()
@@ -692,7 +723,7 @@ class ConversationCoordinatorTest {
     }
 
     @Test fun historyIsMergedWithoutReplacingCurrentStreamingTextOrRestoringResponseId() = runTest {
-        val coordinator = ConversationCoordinator(backgroundScope, getString = getString) { _, _ -> flow<ResponseProgress> {} }
+        val coordinator = ConversationCoordinator(backgroundScope, getString = getString, judgeOperation = { true }) { _, _ -> flow<ResponseProgress> {} }
         val topic = ChatTopic("history", timeMillis = 1)
         val old = ConversationMessage("过去的问题", false, "old", 1, topic.id)
         val partial = ConversationMessage("部分", true, "same", 2, topic.id)
@@ -712,7 +743,7 @@ class ConversationCoordinatorTest {
         val tts = FakeTts()
         var cancelled = 0
         val coordinator = ConversationCoordinator(backgroundScope, getString = getString, speech = tts,
-            saveMessage = { saved += it }, createTopic = { topics += it }) { text, id -> flow {
+            saveMessage = { saved += it }, createTopic = { topics += it }, judgeOperation = { true }) { text, id -> flow {
             requests += text to id
             try {
                 emit(ResponseProgress("一段回复"))
@@ -756,24 +787,24 @@ class ConversationCoordinatorTest {
         val coordinator = ConversationCoordinator(backgroundScope, getString = getString,
             saveMessage = { stored[it.id] = it }, lastResponseId = { topicId ->
                 stored.values.lastOrNull { it.topicId == topicId && it.isAssistant && it.previousResponseId != null }?.previousResponseId
-            }) { text, id -> flow {
+            }, judgeOperation = { true }) { text, id -> flow {
             requests += text to id
             emit(ResponseProgress("你", null))
             emit(ResponseProgress("你好", "response_${requests.size}"))
         } }
         coordinator.startSession()
         coordinator.setEnabled(true)
-        coordinator.onAsrResult(AsrSnapshot(conversation = ConversationContent(liveText = "天气")))
+        coordinator.onAsrResult(AsrSnapshot(conversation = ConversationContent(liveText = "聊聊")))
         runCurrent()
         assertTrue(requests.isEmpty())
-        coordinator.onAsrResult(speech(1, "天气怎么样"))
+        coordinator.onAsrResult(speech(1, "聊聊天"))
         runCurrent()
-        coordinator.onAsrResult(speech(1, "天气怎么样"))
+        coordinator.onAsrResult(speech(1, "聊聊天"))
         runCurrent()
-        assertEquals(listOf("天气怎么样" to null), requests)
+        assertEquals(listOf("聊聊天" to null), requests)
         assertEquals(listOf(false, true), ConversationRepository.snapshot.value.content.messages.map { it.isAssistant })
         assertEquals("你好", ConversationRepository.snapshot.value.content.messages.last().text)
-        coordinator.onAsrResult(speech(2, "天气怎么样"))
+        coordinator.onAsrResult(speech(2, "聊聊天"))
         runCurrent()
         assertEquals("response_1", requests.last().second)
         coordinator.stopSession()
@@ -782,7 +813,7 @@ class ConversationCoordinatorTest {
 
     @Test fun newSpeechCancelsOldReplyAndPauseCancelsPendingRequest() = runTest {
         var cancelled = 0
-        val coordinator = ConversationCoordinator(backgroundScope, getString = getString) { _, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, getString = getString, judgeOperation = { true }) { _, _ -> flow {
             try {
                 emit(ResponseProgress("尚未说完"))
                 awaitCancellation()
@@ -805,7 +836,7 @@ class ConversationCoordinatorTest {
     }
 
     @Test fun requestFailureAppearsInUiInsteadOfCrashingService() = runTest {
-        val coordinator = ConversationCoordinator(backgroundScope, getString = getString) { _, _ -> flow<ResponseProgress> {
+        val coordinator = ConversationCoordinator(backgroundScope, getString = getString, judgeOperation = { true }) { _, _ -> flow<ResponseProgress> {
             throw IllegalStateException("private transport failure")
         } }
         coordinator.startSession()
@@ -821,7 +852,7 @@ class ConversationCoordinatorTest {
         val saved = mutableListOf<ConversationMessage>()
         var requests = 0
         val coordinator = ConversationCoordinator(backgroundScope, getString, tts,
-            saveMessage = { saved += it }, speed = { 2 }) { _, _ -> flow<ResponseProgress> { requests++ } }
+            saveMessage = { saved += it }, speed = { 2 }, judgeOperation = { true }) { _, _ -> flow<ResponseProgress> { requests++ } }
         val topic = ChatTopic("topic", timeMillis = 1)
         val messages = listOf(ConversationMessage("用户问题", false, "user", 1, topic.id),
             ConversationMessage("豆包回复", true, "reply", 2, topic.id, previousResponseId = "keep_response_id"))
@@ -844,7 +875,7 @@ class ConversationCoordinatorTest {
     @Test fun replayCancelsStreamingModelAndRemainsInterruptibleByNewSpeech() = runTest {
         val tts = FakeTts()
         var cancelled = 0
-        val coordinator = ConversationCoordinator(backgroundScope, getString, tts) { _, _ -> flow {
+        val coordinator = ConversationCoordinator(backgroundScope, getString, tts, judgeOperation = { true }) { _, _ -> flow {
             try {
                 emit(ResponseProgress("部分回复"))
                 awaitCancellation()

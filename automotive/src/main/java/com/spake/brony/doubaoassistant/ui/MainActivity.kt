@@ -2,6 +2,7 @@ package com.spake.brony.doubaoassistant.ui
 
 import android.Manifest
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.animation.ValueAnimator
@@ -16,12 +17,12 @@ import android.provider.Settings
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
-import android.view.KeyEvent
-import android.view.inputmethod.EditorInfo
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.viewModels
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.doOnLayout
@@ -32,6 +33,7 @@ import com.spake.brony.doubaoassistant.data.model.AnswerMode
 import com.spake.brony.doubaoassistant.data.model.ConversationPhase
 import com.spake.brony.doubaoassistant.data.model.ListeningStatus
 import com.spake.brony.doubaoassistant.data.model.ReplyStyle
+import com.spake.brony.doubaoassistant.data.model.OverlayStyle
 import com.spake.brony.doubaoassistant.data.model.AsrStatus
 import com.spake.brony.doubaoassistant.data.repository.AssistantPreferences
 import com.spake.brony.doubaoassistant.data.repository.CredentialStore
@@ -42,6 +44,7 @@ import com.spake.brony.doubaoassistant.ui.base.BaseActivity
 import com.spake.brony.doubaoassistant.ui.dialog.ExitAppDialogFragment
 import com.spake.brony.doubaoassistant.ui.dialog.ClearHistoryDialogFragment
 import com.spake.brony.doubaoassistant.ui.dialog.AssistantNameDialogFragment
+import com.spake.brony.doubaoassistant.ui.dialog.MessageInputDialogFragment
 import com.spake.brony.doubaoassistant.viewmodel.KwsUiState
 import com.spake.brony.doubaoassistant.viewmodel.KwsViewModel
 
@@ -49,6 +52,14 @@ class MainActivity : BaseActivity() {
     private val viewModel: KwsViewModel by viewModels()
     private val preferences by lazy { AssistantPreferences(this) }
     private lateinit var binding: ActivityMainBinding
+    private val phonePermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val message = when {
+            checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED -> R.string.phone_call_permission_needed
+            checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED -> R.string.phone_number_only
+            else -> R.string.phone_permissions_granted
+        }
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,18 +73,9 @@ class MainActivity : BaseActivity() {
         viewModel.loadPreferences(preferences.appearance, preferences.captions, preferences.speed, preferences.assistantName)
         viewModel.setReplyStyle(preferences.replyStyle)
         viewModel.setAnswerMode(preferences.answerMode)
+        viewModel.setOverlayStyle(preferences.overlayStyle)
         viewModel.setBackgroundChat(preferences.backgroundChat)
         viewModel.setControlsOnLeft(preferences.controlsOnLeft)
-        binding.messageInput.setOnEditorActionListener { _, action, event ->
-            when {
-                action == EditorInfo.IME_ACTION_SEND -> { sendTypedMessage(); true }
-                event?.keyCode == KeyEvent.KEYCODE_ENTER -> {
-                    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) sendTypedMessage()
-                    true
-                }
-                else -> false
-            }
-        }
         binding.root.doOnLayout { applyDesignDimensions(it.width, it.height) }
         onBackPressedDispatcher.addCallback(this) {
             if (viewModel.uiState.value.settingsOpen) closeSettings() else {
@@ -205,6 +207,26 @@ class MainActivity : BaseActivity() {
         finish()
     }
 
+    fun managePhonePermissions() {
+        val missing = listOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_CONTACTS)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        val permanentlyDenied = missing.any { permission ->
+            val requested = if (permission == Manifest.permission.CALL_PHONE) preferences.callPhoneRequested else preferences.contactsRequested
+            requested && !shouldShowRequestPermissionRationale(permission)
+        }
+        if (missing.isEmpty() || permanentlyDenied) {
+            try {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$packageName".toUri()))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this, R.string.voice_settings_unavailable, Toast.LENGTH_LONG).show()
+            }
+        } else {
+            if (Manifest.permission.CALL_PHONE in missing) preferences.callPhoneRequested = true
+            if (Manifest.permission.READ_CONTACTS in missing) preferences.contactsRequested = true
+            phonePermissions.launch(missing.toTypedArray())
+        }
+    }
+
     fun closeSettings() {
         animateSettings()
         viewModel.closeSettings()
@@ -239,6 +261,12 @@ class MainActivity : BaseActivity() {
         preferences.speed = viewModel.uiState.value.speed
     }
 
+    fun setOverlayStyle(style: OverlayStyle) {
+        preferences.overlayStyle = style
+        viewModel.setOverlayStyle(style)
+        if (viewModel.uiState.value.isListening) sendControl(KwsService.ACTION_REFRESH_BACKGROUND)
+    }
+
     fun setReplyStyle(style: ReplyStyle) {
         preferences.replyStyle = style
         viewModel.setReplyStyle(style)
@@ -249,19 +277,23 @@ class MainActivity : BaseActivity() {
         viewModel.setAnswerMode(mode)
     }
 
-    private fun sendTypedMessage() {
-        val state = viewModel.uiState.value
-        if (state.isListening || state.ended || state.settingsOpen) return
-        val text = binding.messageInput.text.toString().trim()
-        if (text.isEmpty()) return
-        try {
+    fun showMessageInput() {
+        if (!supportFragmentManager.isStateSaved && supportFragmentManager.findFragmentByTag(MESSAGE_INPUT_DIALOG) == null) {
+            MessageInputDialogFragment().showNow(supportFragmentManager, MESSAGE_INPUT_DIALOG)
+        }
+    }
+
+    fun sendTypedMessage(input: String): Boolean {
+        val text = input.trim()
+        if (text.isEmpty()) return false
+        return try {
             startService(Intent(this, KwsService::class.java).setAction(KwsService.ACTION_SEND_TEXT)
                 .putExtra(KwsService.EXTRA_TEXT, text))
             viewModel.onSessionStarted()
-            binding.messageInput.text?.clear()
+            true
         } catch (e: RuntimeException) {
             Log.e("DoubaoUi", "Failed to send typed message", e)
-            binding.messageInput.error = getString(R.string.chat_request_failed)
+            false
         }
     }
 
@@ -317,11 +349,20 @@ class MainActivity : BaseActivity() {
             ConversationPhase.LISTENING -> R.string.voice_listening
             ConversationPhase.THINKING -> R.string.voice_thinking
             ConversationPhase.SPEAKING -> R.string.voice_speaking
-            ConversationPhase.PAUSED -> R.string.voice_paused
+            ConversationPhase.PAUSED -> if (!state.isListening) R.string.voice_stopped else R.string.voice_paused
             ConversationPhase.ENDED -> R.string.voice_ended
             ConversationPhase.NETWORK -> R.string.voice_network
             ConversationPhase.ERROR -> R.string.kws_failed
         })
+    }
+
+    fun showChatError() {
+        val error = viewModel.uiState.value.chatError ?: return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.chat_error_detail_title)
+            .setMessage(error)
+            .setPositiveButton(R.string.voice_confirm, null)
+            .show()
     }
 
     private fun applyDesignDimensions(width: Int, height: Int) {
@@ -346,13 +387,12 @@ class MainActivity : BaseActivity() {
             rightMargin = dp(dimensions.safeX)
         }
         binding.listeningStatus.size(dimensions.statusText)
-        binding.messageInput.size(dimensions.statusText)
         binding.statusSupport.size((dimensions.width * .01f).coerceIn(14f, 20f))
-        binding.captionsContainer.updateLayoutParams {
+        binding.inputContainer.updateLayoutParams {
             this.width = dp(dimensions.control)
             this.height = dp(dimensions.control)
         }
-        binding.captionsButton.size(dimensions.control * .34f)
+        binding.inputButton.size(dimensions.control * .34f)
         listOf(binding.toggleListening, binding.toggleChat, binding.endSession).forEach { button ->
             button.updateLayoutParams<ViewGroup.MarginLayoutParams> {
                 this.width = dp(dimensions.control)
@@ -368,14 +408,15 @@ class MainActivity : BaseActivity() {
             settingsHeader.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = dp(if (dimensions.compact || dimensions.ultraWide) 0f else 26f) }
             settingsTitle.size((dimensions.width * .02f).coerceIn(25f, 38f))
             settingsTitle.typeface = Typeface.create(settingsTitle.typeface, 500, false)
-            listOf(nameLabel, appearanceLabel, layoutLabel, captionsLabel, speedLabel, replyStyleLabel, answerModeLabel, credentialsLabel, permissionLabel, backgroundChatLabel, historyLabel).forEach { it.size(dimensions.settingLabel) }
+            listOf(nameLabel, appearanceLabel, layoutLabel, captionsLabel, speedLabel, replyStyleLabel, answerModeLabel, credentialsLabel, permissionLabel, backgroundChatLabel, overlayStyleLabel, historyLabel).forEach { it.size(dimensions.settingLabel) }
             nameValue.size(dimensions.settingLabel)
             listOf(nameDetail, captionsDetail, answerModeDetail, credentialsDetail, permissionDetail, backgroundChatDetail, historyDetail).forEach { it.size(dimensions.settingDetail) }
             listOf(nameSection, appearanceSection, layoutSection, captionsSection, speedSection, replyStyleSection, answerModeSection, credentialsSection, permissionSection, backgroundChatSection, historySection).forEach { it.setPadding(0, dp(dimensions.settingSpacing), 0, dp(dimensions.settingSpacing)) }
+            overlayStyleSection.setPadding(0, 0, 0, dp(dimensions.settingSpacing))
             appearanceOptions.updateLayoutParams<ViewGroup.MarginLayoutParams> { this.height = dp(dimensions.appearanceHeight); topMargin = dp(if (dimensions.compact || dimensions.ultraWide) 14f else 23f) }
             speedOptions.updateLayoutParams<ViewGroup.MarginLayoutParams> { topMargin = dp(if (dimensions.compact || dimensions.ultraWide) 14f else 23f) }
             listOf(themeSystemLabel, themeLightLabel, themeDarkLabel).forEach { it.size((dimensions.width * .01f).coerceIn(13f, 19f)) }
-            listOf(speedSlow, speedNormal, speedFast, layoutLeft, layoutRight, replyStyleMinimal, replyStyleSimple, replyStyleDetailed, answerModeSingle, answerModeChat).forEach { it.size((dimensions.width * .011f).coerceIn(16f, 21f)) }
+            listOf(speedSlow, speedNormal, speedFast, layoutLeft, layoutRight, replyStyleMinimal, replyStyleSimple, replyStyleDetailed, answerModeSingle, answerModeChat, overlayStyleMinimal, overlayStyleCompact, overlayStyleDetailed).forEach { it.size((dimensions.width * .011f).coerceIn(16f, 21f)) }
         }
     }
 
@@ -384,5 +425,6 @@ class MainActivity : BaseActivity() {
         private const val EXIT_APP_DIALOG = "exit_app"
         private const val CLEAR_HISTORY_DIALOG = "clear_history"
         private const val ASSISTANT_NAME_DIALOG = "assistant_name"
+        private const val MESSAGE_INPUT_DIALOG = "message_input"
     }
 }

@@ -9,6 +9,14 @@ import com.spake.brony.doubaoassistant.data.repository.TestCredentialKeys
 import com.spake.brony.doubaoassistant.data.model.AsrSnapshot
 import com.spake.brony.doubaoassistant.data.model.AsrStatus
 import com.spake.brony.doubaoassistant.data.model.ConversationContent
+import com.spake.brony.doubaoassistant.data.model.ResponseProgress
+import com.spake.brony.doubaoassistant.data.repository.ConversationRepository
+import com.spake.brony.doubaoassistant.conversation.ConversationCoordinator
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import java.lang.reflect.Proxy
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -32,7 +40,7 @@ class DoubaoAsrRecognizerTest {
             arrayOf(SpeechEngine::class.java)) { _, method, _ ->
             throw IllegalStateException(method.name + ": " + keys.joinToString(" "))
         } as SpeechEngine
-        val recognizer = DoubaoAsrRecognizer(RuntimeEnvironment.getApplication(), ConversationContent()) { _, _ -> }
+        val recognizer = DoubaoAsrRecognizer(RuntimeEnvironment.getApplication(), ConversationContent()) { _, _, _ -> }
         recognizer.javaClass.getDeclaredField("engine").apply { isAccessible = true }.set(recognizer, engine)
         ShadowLog.clear()
         recognizer.close()
@@ -44,10 +52,10 @@ class DoubaoAsrRecognizerTest {
         assertTrue(logs.all { log -> keys.none { log.msg.contains(it) } })
     }
 
-    @Test fun newTopicDiscardsOldTranscriptAndInboxButNormalRotationKeepsNewConfirmedSpeech() {
+    @Test fun newTopicResetsTranscriptAndNormalRotationKeepsSequenceWithoutReemittingOldText() {
         val application: Application = RuntimeEnvironment.getApplication()
         val updates = mutableListOf<AsrSnapshot>()
-        val recognizer = DoubaoAsrRecognizer(application, ConversationContent()) { _, snapshot -> updates += snapshot }
+        val recognizer = DoubaoAsrRecognizer(application, ConversationContent()) { _, snapshot, _ -> updates += snapshot }
         fun field(name: String) = recognizer.javaClass.getDeclaredField(name).apply { isAccessible = true }
         val pcm = ShortArray(1600)
         try {
@@ -68,14 +76,15 @@ class DoubaoAsrRecognizerTest {
             recognizer.process(pcm, pcm.size, wanted = false, generation = 3, topicGeneration = 1)
             assertSame(fresh, field("transcript").get(recognizer))
             assertEquals(1L, updates.last().confirmedVersion)
-            assertEquals("新话题", updates.last().confirmedText)
+            assertEquals("", updates.last().confirmedText)
+            assertEquals(listOf("新话题"), updates.last().conversation.messages.map { it.text })
         } finally { recognizer.close() }
     }
 
     @Test fun disablingAsrReleasesTheEngineAndDoesNotUploadAnyMoreAudio() {
         val application: Application = RuntimeEnvironment.getApplication()
         val updates = mutableListOf<AsrSnapshot>()
-        val recognizer = DoubaoAsrRecognizer(application, ConversationContent()) { _, snapshot -> updates += snapshot }
+        val recognizer = DoubaoAsrRecognizer(application, ConversationContent()) { _, snapshot, _ -> updates += snapshot }
         var destroyed = 0
         var fed = 0
         val engine = Proxy.newProxyInstance(SpeechEngine::class.java.classLoader,
@@ -100,6 +109,58 @@ class DoubaoAsrRecognizerTest {
         } finally { recognizer.close() }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun kwsStopThenResumeDoesNotSubmitThePreviousQuestionAgain() = runTest {
+        ConversationRepository.reset()
+        val application: Application = RuntimeEnvironment.getApplication()
+        val requests = mutableListOf<String>()
+        val coordinator = ConversationCoordinator(backgroundScope, application::getString, judgeOperation = { true }) { text, _ -> flow {
+            requests += text
+            emit(ResponseProgress("回答"))
+            awaitCancellation()
+        } }
+        val recognizer = DoubaoAsrRecognizer(application, ConversationContent()) { _, snapshot, _ ->
+            coordinator.onAsrResult(snapshot)
+        }
+        val pcm = ShortArray(1600)
+        try {
+            coordinator.startSession()
+            coordinator.setEnabled(true)
+            recognizer.process(pcm, pcm.size, wanted = false, generation = 1)
+            val transcript = recognizer.javaClass.getDeclaredField("transcript").apply { isAccessible = true }
+                .get(recognizer) as AsrTranscript
+            transcript.accept("""{"result":{"text":"旧问题"}}""", true)
+            recognizer.process(pcm, pcm.size, wanted = false, generation = 1)
+            runCurrent()
+            assertEquals(listOf("旧问题"), requests)
+
+            // SDK 已产生确定句，但旧代次回调还在队列中，KWS 命中后必须丢弃。
+            transcript.beginRequest()
+            transcript.accept("""{"result":{"text":"未交付的旧句"}}""", true)
+
+            coordinator.clearRecognition() // KWS 闭嘴丢弃在途句子，然后暂停。
+            coordinator.stopSession()
+            recognizer.process(pcm, pcm.size, wanted = false, generation = 2)
+            coordinator.restartListening() // KWS 说话只恢复输入，不重新提交问题。
+            coordinator.setEnabled(true)
+            recognizer.process(pcm, pcm.size, wanted = false, generation = 3)
+            runCurrent()
+            assertEquals(listOf("旧问题"), requests)
+            assertFalse(coordinator.hasActiveReply)
+            assertEquals(1, ConversationRepository.snapshot.value.content.messages.count { it.role == 0 })
+
+            transcript.beginRequest()
+            transcript.accept("""{"result":{"text":"新问题"}}""", true)
+            recognizer.process(pcm, pcm.size, wanted = false, generation = 3)
+            runCurrent()
+            assertEquals(listOf("旧问题", "新问题"), requests)
+        } finally {
+            recognizer.close()
+            coordinator.stopSession()
+            ConversationRepository.reset()
+        }
+    }
+
     @Test fun actualSdkFailureWaitsForExplicitResume() {
         verifyEnd(AsrStatus.ERROR)
     }
@@ -122,7 +183,7 @@ class DoubaoAsrRecognizerTest {
     private fun verifyEnd(status: AsrStatus, confirmed: Boolean = false) {
         val application: Application = RuntimeEnvironment.getApplication()
         val updates = mutableListOf<AsrSnapshot>()
-        val recognizer = DoubaoAsrRecognizer(application, ConversationContent()) { _, snapshot -> updates += snapshot }
+        val recognizer = DoubaoAsrRecognizer(application, ConversationContent()) { _, snapshot, _ -> updates += snapshot }
         var destroyed = 0
         var fed = 0
         fun fakeEngine() = Proxy.newProxyInstance(SpeechEngine::class.java.classLoader,
@@ -176,6 +237,8 @@ class DoubaoAsrRecognizerTest {
             assertEquals(updatesAfterFailure, updates.size)
             recognizer.process(pcm, pcm.size, wanted = false, generation = 2)
             assertFalse(field("failed").getBoolean(recognizer))
+            assertEquals("", updates.last().confirmedText)
+            assertEquals(if (confirmed) 1L else 0L, updates.last().confirmedVersion)
             field("engine").set(recognizer, fakeEngine()) // 不调用真实 SDK 或云端。
             recognizer.process(pcm, pcm.size, wanted = true, generation = 2)
             assertEquals(1, fed)

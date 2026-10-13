@@ -6,6 +6,7 @@ import com.spake.brony.doubaoassistant.data.model.AnswerMode
 import com.spake.brony.doubaoassistant.data.model.Appearance
 import com.spake.brony.doubaoassistant.data.model.AssistantName
 import com.spake.brony.doubaoassistant.data.model.ReplyStyle
+import com.spake.brony.doubaoassistant.data.model.OverlayStyle
 
 class AssistantPreferences(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
@@ -41,9 +42,25 @@ class AssistantPreferences(context: Context) {
         get() = preferences.getBoolean(MICROPHONE_REQUESTED, false)
         set(value) { preferences.edit { putBoolean(MICROPHONE_REQUESTED, value) } }
 
+    var contactsRequested: Boolean
+        get() = preferences.getBoolean(CONTACTS_REQUESTED, false)
+        set(value) { preferences.edit { putBoolean(CONTACTS_REQUESTED, value) } }
+
+    var callPhoneRequested: Boolean
+        get() = preferences.getBoolean(CALL_PHONE_REQUESTED, false)
+        set(value) { preferences.edit { putBoolean(CALL_PHONE_REQUESTED, value) } }
+
+    var locationRequested: Boolean
+        get() = preferences.getBoolean(LOCATION_REQUESTED, false)
+        set(value) { preferences.edit { putBoolean(LOCATION_REQUESTED, value) } }
+
     var backgroundChat: Boolean
         get() = preferences.getBoolean(BACKGROUND_CHAT, false)
         set(value) { preferences.edit { putBoolean(BACKGROUND_CHAT, value) } }
+
+    var overlayStyle: OverlayStyle
+        get() = OverlayStyle.entries.firstOrNull { it.name == preferences.getString(OVERLAY_STYLE, null) } ?: OverlayStyle.DETAILED
+        set(value) { preferences.edit { putString(OVERLAY_STYLE, value.name) } }
 
     var controlsOnLeft: Boolean
         get() = preferences.getBoolean(CONTROLS_ON_LEFT, false)
@@ -58,7 +75,11 @@ class AssistantPreferences(context: Context) {
         const val SPEED = "speed"
         const val REPLY_STYLE = "reply_style"
         const val MICROPHONE_REQUESTED = "microphone_requested"
+        const val CONTACTS_REQUESTED = "contacts_requested"
+        const val CALL_PHONE_REQUESTED = "call_phone_requested"
+        const val LOCATION_REQUESTED = "location_requested"
         const val BACKGROUND_CHAT = "background_chat"
+        const val OVERLAY_STYLE = "overlay_style"
         const val CONTROLS_ON_LEFT = "controls_on_left"
         const val ANSWER_MODE = "answer_mode"
     }

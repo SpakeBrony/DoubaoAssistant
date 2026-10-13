@@ -16,7 +16,7 @@
     <string name="voice_listening">我在听</string>
     <string name="voice_thinking">想一想…</string>
     <string name="voice_speaking">回复中...</string>
-    <string name="voice_paused">聊天已暂停</string>
+    <string name="voice_paused">等待唤醒</string>
     <string name="voice_stopped">麦克风已关闭</string>
     <string name="voice_ended">对话已结束</string>
     <string name="voice_ended_support">点击麦克风，开始新对话</string>
@@ -29,6 +29,7 @@
     <string name="voice_show_captions">显示对话文字</string>
     <string name="voice_pause_chat">暂停聊天</string>
     <string name="voice_command_stopped">好的</string>
+    <string name="voice_command_awake">我在</string>
     <string name="voice_command_returned_home">我退下了</string>
     <string name="voice_operation_invalid_reply">未能识别操作，请再说一次</string>
     <string name="voice_command_stop_failed">暂时无法暂停聊天，请重试</string>

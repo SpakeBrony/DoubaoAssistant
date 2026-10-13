@@ -3,6 +3,7 @@ package com.spake.brony.doubaoassistant.data.repository
 import com.spake.brony.doubaoassistant.data.model.AnswerMode
 import com.spake.brony.doubaoassistant.data.model.Appearance
 import com.spake.brony.doubaoassistant.data.model.ReplyStyle
+import com.spake.brony.doubaoassistant.data.model.OverlayStyle
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,6 +27,7 @@ class AssistantPreferencesTest {
             assertTrue(preferences.captions)
             assertEquals(1, preferences.speed)
             assertFalse(preferences.backgroundChat)
+            assertEquals(OverlayStyle.DETAILED, preferences.overlayStyle)
             assertFalse(preferences.controlsOnLeft)
             assertFalse(preferences.microphoneRequested)
 
@@ -36,6 +38,7 @@ class AssistantPreferencesTest {
             preferences.captions = false
             preferences.speed = 2
             preferences.backgroundChat = true
+            preferences.overlayStyle = OverlayStyle.COMPACT
             preferences.controlsOnLeft = true
             preferences.microphoneRequested = true
             val restored = AssistantPreferences(context)
@@ -46,6 +49,7 @@ class AssistantPreferencesTest {
             assertFalse(restored.captions)
             assertEquals(2, restored.speed)
             assertTrue(restored.backgroundChat)
+            assertEquals(OverlayStyle.COMPACT, restored.overlayStyle)
             assertTrue(restored.controlsOnLeft)
             assertTrue(restored.microphoneRequested)
 
@@ -56,6 +60,8 @@ class AssistantPreferencesTest {
             assertEquals(Appearance.LIGHT, restored.appearance)
             assertEquals(2, restored.speed)
             assertEquals(AnswerMode.CHAT, restored.answerMode)
+            storage.edit().putString("overlay_style", "unknown").commit()
+            assertEquals(OverlayStyle.DETAILED, restored.overlayStyle)
         } finally { storage.edit().clear().commit() }
     }
 }

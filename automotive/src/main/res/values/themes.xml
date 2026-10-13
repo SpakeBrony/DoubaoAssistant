@@ -12,6 +12,12 @@
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 
+    <style name="Theme.DoubaoAssistant.PermissionRequest" parent="Theme.DoubaoAssistant">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowDisablePreview">true</item>
+    </style>
+
     <style name="Voice.Text" parent="">
         <item name="android:textColor">@color/voice_text</item>
         <item name="android:includeFontPadding">false</item>

@@ -12,6 +12,7 @@ import com.spake.brony.doubaoassistant.data.model.AssistantName
 import com.spake.brony.doubaoassistant.data.model.ConversationContent
 import com.spake.brony.doubaoassistant.data.model.ConversationPhase
 import com.spake.brony.doubaoassistant.data.model.ReplyStyle
+import com.spake.brony.doubaoassistant.data.model.OverlayStyle
 import com.spake.brony.doubaoassistant.data.repository.KwsRepository
 import com.spake.brony.doubaoassistant.data.repository.AsrRepository
 import com.spake.brony.doubaoassistant.data.repository.ConversationRepository
@@ -32,6 +33,7 @@ data class KwsUiState(
     val answerMode: AnswerMode = AnswerMode.CHAT,
     val assistantName: String = AssistantName.DEFAULT,
     val backgroundChat: Boolean = false,
+    val overlayStyle: OverlayStyle = OverlayStyle.DETAILED,
     val controlsOnLeft: Boolean = false,
     val ended: Boolean = false,
     val conversation: ConversationContent = ConversationContent(),
@@ -50,7 +52,6 @@ data class KwsUiState(
     val isPaused: Boolean get() = phase == ConversationPhase.PAUSED || phase == ConversationPhase.ENDED || phase == ConversationPhase.ERROR
     val isReplying: Boolean get() = conversation.phase == ConversationPhase.THINKING || conversation.phase == ConversationPhase.SPEAKING
     val canControlChat: Boolean get() = !ended && (isListening || isReplying || snapshot.status == ListeningStatus.STOPPED)
-    val inputError: String? get() = errorMessage ?: asr.error ?: chatError ?: snapshot.error ?: ttsError ?: historyError
     val waveformLevel: Float get() = if (isListening && snapshot.asrRequested && !isPaused &&
         asr.conversation.liveText.isNotEmpty()) audioLevel else 0f
 }
@@ -103,6 +104,10 @@ class KwsViewModel(
 
     fun setBackgroundChat(enabled: Boolean) {
         mutableUiState.value = mutableUiState.value.copy(backgroundChat = enabled)
+    }
+
+    fun setOverlayStyle(style: OverlayStyle) {
+        mutableUiState.value = mutableUiState.value.copy(overlayStyle = style)
     }
 
     fun setControlsOnLeft(left: Boolean) {

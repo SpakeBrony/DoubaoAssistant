@@ -1,12 +1,13 @@
 package com.spake.brony.doubaoassistant.speech.asr
 
 import com.spake.brony.doubaoassistant.data.model.AsrCommand
+import com.spake.brony.doubaoassistant.R
 import org.junit.Assert.*
 import org.junit.Test
 
 class AsrCommandsTest {
     @Test fun microphoneCandidatesKeepBothOrdersAndDynamicNamesWithoutExecutingPartialCommands() {
-        assertNull(AsrCommands.rules.first { it.command == AsrCommand.CLOSE_MICROPHONE }.reply)
+        assertTrue(AsrCommands.rules.all { it.reply == R.string.voice_command_stopped })
         for (name in listOf("豆包", "小白", "小小助手")) {
             for (text in listOf("关闭麦克风$name", "${name}关闭麦克风")) {
                 for (length in 1..text.length) {

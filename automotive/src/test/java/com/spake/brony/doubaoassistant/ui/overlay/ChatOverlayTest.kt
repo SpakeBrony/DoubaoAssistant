@@ -152,6 +152,144 @@ class ChatOverlayTest {
         } finally { overlay.close() }
     }
 
+    @Test fun compactHidesChatKeepsControlsAndNeverResizesAtAnyCorner() {
+        val chatActions = mutableListOf<Boolean>()
+        val micActions = mutableListOf<Boolean>()
+        val overlay = ChatOverlay(application, chatActions::add, micActions::add)
+        try {
+            assertTrue(overlay.show(Appearance.LIGHT, OverlayStyle.COMPACT))
+            overlay.update(listening, AsrSnapshot(), ConversationSnapshot(ConversationContent(messages =
+                listOf(ConversationMessage("精简模式不显示这条回复", true, "reply")))))
+            val view = binding(overlay)
+            val params = layout(view.root)
+            assertEquals(132, params.width)
+            assertEquals(44, params.height)
+            assertEquals(View.GONE, view.overlayHeader.visibility)
+            assertEquals(View.GONE, view.overlayConversation.visibility)
+            assertEquals(View.GONE, view.overlayDivider.visibility)
+            assertFalse(texts(view.root).any { it.text.toString() == "精简模式不显示这条回复" })
+            assertEquals(36, view.overlayMicrophone.width)
+            assertEquals(36, view.overlayToggleChat.width)
+            assertTrue(view.overlayVoiceMark.width > 0)
+            assertEquals(View.VISIBLE, view.overlayVoiceMark.visibility)
+            for (control in listOf(view.overlayMicrophone, view.overlayToggleChat)) {
+                val rect = Rect(0, 0, control.width, control.height)
+                (view.root as ViewGroup).offsetDescendantRectToMyCoords(control, rect)
+                touch(view.root, MotionEvent.ACTION_DOWN, rect.centerX().toFloat(), rect.centerY().toFloat())
+                touch(view.root, MotionEvent.ACTION_UP, rect.centerX().toFloat(), rect.centerY().toFloat())
+            }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf(true), micActions)
+            assertEquals(listOf(false), chatActions)
+            val startX = params.x
+            val startY = params.y
+            for (corner in OverlayWindowView.Corner.entries) {
+                val x = if (corner.left) 1f else params.width - 1f
+                val y = if (corner.top) 1f else params.height - 1f
+                touch(view.root, MotionEvent.ACTION_DOWN, x, y)
+                touch(view.root, MotionEvent.ACTION_MOVE, x - 40f, y + 30f)
+                touch(view.root, MotionEvent.ACTION_UP, x - 40f, y + 30f)
+                assertEquals(132, params.width)
+                assertEquals(44, params.height)
+                assertEquals(startX, params.x)
+                assertEquals(startY, params.y)
+            }
+            overlay.update(KwsSnapshot(chatPaused = true), AsrSnapshot(), ConversationSnapshot())
+            assertTrue(overlay.isShowing)
+            assertEquals("开启麦克风", view.overlayMicrophone.contentDescription)
+            assertEquals("恢复聊天", view.overlayToggleChat.contentDescription)
+            view.overlayMicrophone.performClick()
+            view.overlayToggleChat.performClick()
+            assertEquals(listOf(true, false), micActions)
+            assertEquals(listOf(false, true), chatActions)
+        } finally { overlay.close() }
+    }
+
+    @Test fun compactLongPressDragsAndStylesRestoreTheirOwnGeometryAcrossInstances() {
+        geometry.edit().putInt("x", 300).putInt("y", 100).putInt("width", 420).putInt("height", 380)
+            .putInt("compact_x", 400).putInt("compact_y", 120).commit()
+        var overlay = ChatOverlay(application)
+        try {
+            assertTrue(overlay.show(Appearance.DARK, OverlayStyle.COMPACT))
+            val view = binding(overlay).root
+            val params = layout(view)
+            touch(view, MotionEvent.ACTION_DOWN, 1f, 1f)
+            longPress()
+            touch(view, MotionEvent.ACTION_MOVE, 51f, 41f)
+            touch(view, MotionEvent.ACTION_UP, 51f, 41f)
+            assertEquals(450, params.x)
+            assertEquals(160, params.y)
+            assertEquals(450, geometry.getInt("compact_x", -1))
+            assertEquals(160, geometry.getInt("compact_y", -1))
+            assertTrue(overlay.show(Appearance.DARK, OverlayStyle.DETAILED))
+            val detailed = layout(binding(overlay).root)
+            assertEquals(300, detailed.x)
+            assertEquals(100, detailed.y)
+            assertEquals(420, detailed.width)
+            assertEquals(380, detailed.height)
+            assertTrue((binding(overlay).root as OverlayWindowView).resizeEnabled)
+            assertEquals(View.VISIBLE, binding(overlay).overlayConversation.visibility)
+            overlay.close()
+            overlay = ChatOverlay(application)
+            assertTrue(overlay.show(Appearance.DARK, OverlayStyle.COMPACT))
+            val restored = layout(binding(overlay).root)
+            assertEquals(450, restored.x)
+            assertEquals(160, restored.y)
+            assertEquals(132, restored.width)
+            assertEquals(44, restored.height)
+            assertFalse((binding(overlay).root as OverlayWindowView).resizeEnabled)
+        } finally { overlay.close() }
+    }
+
+    @Test fun temporarilyClampedWindowDoesNotOverwriteSavedGeometryOnClose() {
+        for (style in OverlayStyle.entries) {
+            val prefix = if (style == OverlayStyle.COMPACT) "compact_" else ""
+            geometry.edit().putInt("${prefix}x", 4000).putInt("${prefix}y", 2000)
+                .putInt("width", 600).putInt("height", 700).commit()
+            val overlay = ChatOverlay(application)
+            try {
+                assertTrue(overlay.show(Appearance.LIGHT, style))
+                val params = layout(binding(overlay).root)
+                assertTrue(params.x < 4000)
+                assertTrue(params.y < 2000)
+                overlay.close()
+                assertEquals(4000, geometry.getInt("${prefix}x", -1))
+                assertEquals(2000, geometry.getInt("${prefix}y", -1))
+                assertEquals(600, geometry.getInt("width", -1))
+                assertEquals(700, geometry.getInt("height", -1))
+            } finally { overlay.close() }
+        }
+    }
+
+    @Test fun compactSavesFinalFingerPositionOnReleaseAndAlsoWhenClosedDuringDrag() {
+        geometry.edit().putInt("compact_x", 400).putInt("compact_y", 120).commit()
+        var overlay = ChatOverlay(application)
+        try {
+            assertTrue(overlay.show(Appearance.LIGHT, OverlayStyle.COMPACT))
+            var view = binding(overlay).root
+            layout(view)
+            touch(view, MotionEvent.ACTION_DOWN, 60f, 22f)
+            longPress()
+            touch(view, MotionEvent.ACTION_MOVE, 80f, 32f)
+            touch(view, MotionEvent.ACTION_UP, 90f, 42f)
+            assertEquals(430, geometry.getInt("compact_x", -1))
+            assertEquals(140, geometry.getInt("compact_y", -1))
+            overlay.close()
+            overlay = ChatOverlay(application)
+            assertTrue(overlay.show(Appearance.LIGHT, OverlayStyle.COMPACT))
+            view = binding(overlay).root
+            val params = layout(view)
+            assertEquals(430, params.x)
+            assertEquals(140, params.y)
+            touch(view, MotionEvent.ACTION_DOWN, 60f, 22f)
+            longPress()
+            touch(view, MotionEvent.ACTION_MOVE, 90f, 42f)
+            overlay.close()
+            assertEquals(460, geometry.getInt("compact_x", -1))
+            assertEquals(160, geometry.getInt("compact_y", -1))
+        } finally { overlay.close() }
+    }
+
     @Test fun longPressCannotTriggerPauseButtonAndOrdinaryTapCan() {
         val actions = mutableListOf<Boolean>()
         val overlay = ChatOverlay(application, actions::add)

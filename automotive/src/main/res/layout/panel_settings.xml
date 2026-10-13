@@ -6,6 +6,7 @@
         <import type="com.spake.brony.doubaoassistant.data.model.Appearance" />
         <import type="com.spake.brony.doubaoassistant.data.model.ReplyStyle" />
         <import type="com.spake.brony.doubaoassistant.data.model.AnswerMode" />
+        <import type="com.spake.brony.doubaoassistant.data.model.OverlayStyle" />
         <variable name="viewModel" type="com.spake.brony.doubaoassistant.viewmodel.KwsViewModel" />
         <variable name="actions" type="com.spake.brony.doubaoassistant.ui.MainActivity" />
     </data>
@@ -424,6 +425,55 @@
                     android:background="@android:color/transparent"
                     android:onClick="@{() -> actions.toggleBackgroundChat()}" />
             </LinearLayout>
+            <LinearLayout android:id="@+id/overlay_style_section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="28dp"
+                android:visibility="@{viewModel.uiState.backgroundChat ? View.VISIBLE : View.GONE}">
+                <TextView android:id="@+id/overlay_style_label"
+                    style="@style/Voice.SettingLabel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/voice_overlay_style" />
+                <LinearLayout android:layout_width="match_parent"
+                    android:layout_height="59dp"
+                    android:layout_marginTop="16dp"
+                    android:orientation="horizontal"
+                    android:padding="5dp"
+                    android:background="@drawable/voice_segmented">
+                    <TextView android:id="@+id/overlay_style_minimal"
+                        style="@style/Voice.SettingButton"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/voice_segment"
+                        android:textColor="@color/voice_option_text"
+                        android:text="@string/voice_overlay_style_minimal"
+                        android:selected="@{viewModel.uiState.overlayStyle == OverlayStyle.MINIMAL}"
+                        android:onClick="@{() -> actions.setOverlayStyle(OverlayStyle.MINIMAL)}" />
+                    <TextView android:id="@+id/overlay_style_compact"
+                        style="@style/Voice.SettingButton"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/voice_segment"
+                        android:textColor="@color/voice_option_text"
+                        android:text="@string/voice_overlay_style_compact"
+                        android:selected="@{viewModel.uiState.overlayStyle == OverlayStyle.COMPACT}"
+                        android:onClick="@{() -> actions.setOverlayStyle(OverlayStyle.COMPACT)}" />
+                    <TextView android:id="@+id/overlay_style_detailed"
+                        style="@style/Voice.SettingButton"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/voice_segment"
+                        android:textColor="@color/voice_option_text"
+                        android:text="@string/voice_overlay_style_detailed"
+                        android:selected="@{viewModel.uiState.overlayStyle == OverlayStyle.DETAILED}"
+                        android:onClick="@{() -> actions.setOverlayStyle(OverlayStyle.DETAILED)}" />
+                </LinearLayout>
+            </LinearLayout>
             <View android:layout_width="match_parent"
                 android:layout_height="1dp"
                 android:background="@color/voice_line" />
@@ -466,6 +516,40 @@
                     android:paddingEnd="16dp"
                     android:text="@string/voice_change_name"
                     android:onClick="@{() -> actions.changeAssistantName()}" />
+            </LinearLayout>
+            <View android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/voice_line" />
+            <LinearLayout android:id="@+id/contacts_section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingTop="28dp"
+                android:paddingBottom="28dp">
+                <LinearLayout android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="16dp"
+                    android:orientation="vertical">
+                    <TextView style="@style/Voice.SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/phone_contacts_title" />
+                    <TextView style="@style/Voice.SettingDetail"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/phone_contacts_detail" />
+                </LinearLayout>
+                <TextView android:id="@+id/manage_contacts"
+                    style="@style/Voice.SettingButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:minWidth="64dp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:text="@string/phone_contacts_manage"
+                    android:onClick="@{() -> actions.managePhonePermissions()}" />
             </LinearLayout>
             <View android:layout_width="match_parent"
                 android:layout_height="1dp"

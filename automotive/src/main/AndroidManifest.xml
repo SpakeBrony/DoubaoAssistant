@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.TRANSMIT_IR" />
+    <uses-feature android:name="android.hardware.consumerir" android:required="false" />
+    <!-- 车机独立音量组权限；是否授予取决于固件，拒绝时返回失败。 -->
+    <uses-permission android:name="android.car.permission.CAR_CONTROL_AUDIO_VOLUME" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
@@ -10,13 +15,57 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 用户授权后直接拨号；按姓名呼叫时额外读取本机通讯录。 -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- 仅在查询本地天气时申请；近似位置也可用于天气查询。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- ECARX 车控扩展权限；声明并不代表固件会向普通应用授予，失败时由车控接口返回。 -->
     <uses-permission android:name="android.car.permission.CAR_VENDOR_EXTENSION" />
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <uses-feature
         android:name="android.hardware.type.automotive"
         android:required="true" />
+
+    <!-- Android 11+ 查询可启动应用，以及能接收地图、导航、拨号请求的应用。 -->
+    <queries>
+        <package android:name="com.tencent.qqmusic" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CALL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.NAVIGATE" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="androidx.car.app.action.NAVIGATE" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="androidamap" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="google.navigation" />
+        </intent>
+    </queries>
 
     <application
         android:name=".DoubaoApplication"
@@ -29,11 +78,16 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.DoubaoAssistant">
+        <uses-library android:name="android.car" android:required="false" />
         <activity
             android:name=".ui.MainActivity"
             android:windowSoftInputMode="adjustResize"
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
+            android:exported="false" />
+        <activity
+            android:name=".ui.PhonePermissionActivity"
+            android:theme="@style/Theme.DoubaoAssistant.PermissionRequest"
             android:exported="false" />
         <activity
             android:name=".ui.PermissionActivity"

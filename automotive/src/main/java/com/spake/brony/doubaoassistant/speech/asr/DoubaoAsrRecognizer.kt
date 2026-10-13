@@ -46,14 +46,15 @@ internal class DoubaoAsrRecognizer(
         if (requestGeneration != generation || transcriptGeneration != topicGeneration) {
             close()
             if (transcriptGeneration != topicGeneration) {
-                // 新话题必须丢弃旧确定句和去重状态；普通 ASR 轮换仍保留它们。
+                // 新话题清空旧历史和序号；普通 ASR 轮换保留单调序号。
                 transcript = AsrTranscript()
                 transcriptGeneration = topicGeneration
             }
             requestGeneration = generation
             failed = false
             lastSnapshot = null
-            transcript.clearLiveText()
+            // 上一句已随旧代次交付，重开只保留单调序号，不能再次带出旧文字。
+            transcript.clearPendingText()
         }
         if (!wanted) {
             if (engine != null) close()
@@ -127,7 +128,7 @@ internal class DoubaoAsrRecognizer(
         next.setOptionInt(Sdk.PARAMS_KEY_ASR_RECV_TIMEOUT_INT, 70000)
         next.setOptionBoolean(Sdk.PARAMS_KEY_ASR_SHOW_UTTER_BOOL, true)
         next.setOptionString(Sdk.PARAMS_KEY_ASR_REQ_PARAMS_STRING,
-            "{\"model_name\":\"bigmodel\",\"enable_itn\":true,\"enable_punc\":true,\"show_utterances\":true,\"result_type\":\"full\",\"end_window_size\":1500,\"force_to_speech_time\":1}")
+            "{\"model_name\":\"bigmodel\",\"enable_itn\":true,\"enable_punc\":true,\"show_utterances\":true,\"result_type\":\"full\",\"end_window_size\":1200,\"force_to_speech_time\":1}")
         SpeechSdkEnvironment.checkCode(next.initEngine(), "initEngine()")
         SpeechSdkEnvironment.checkCode(next.sendDirective(Sdk.DIRECTIVE_SYNC_STOP_ENGINE, ""), "SYNC_STOP_ENGINE")
         val id = ++session

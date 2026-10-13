@@ -54,6 +54,8 @@ internal class DoubaoTtsPlayer(
 
     private val main = Handler(Looper.getMainLooper())
     private val audioManager = application.getSystemService(AudioManager::class.java)
+    private val playbackAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
     private val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val signals = Channel<Unit>(Channel.CONFLATED)
@@ -183,6 +185,8 @@ internal class DoubaoTtsPlayer(
         engine.setOptionString(Sdk.PARAMS_KEY_START_ENGINE_PAYLOAD_STRING, payload)
         engine.setOptionInt(Sdk.PARAMS_KEY_TTS_CONN_TIMEOUT_INT, 10000)
         engine.setOptionInt(Sdk.PARAMS_KEY_TTS_RECV_TIMEOUT_INT, 15000)
+        // SDK 播放器与音频焦点统一使用媒体通道，跟随设备媒体音量。
+        engine.setOptionInt(Sdk.PARAMS_KEY_AUDIO_STREAM_TYPE_INT, Sdk.AUDIO_STREAM_TYPE_MEDIA)
         engine.setOptionBoolean(Sdk.PARAMS_KEY_TTS_ENABLE_PLAYER_BOOL, true)
         engine.setOptionBoolean(Sdk.PARAMS_KEY_TTS_ENABLE_DUMP_BOOL, false)
         engine.setOptionBoolean(Sdk.PARAMS_KEY_ENABLE_PLAYER_AUDIO_CALLBACK_BOOL, true)
@@ -197,7 +201,7 @@ internal class DoubaoTtsPlayer(
                     Log.i("DoubaoTts", "reply=${current.version} callback=$type len=$len")
                 when (type) {
                     Sdk.MESSAGE_TYPE_EVENT_TTS_RESPONSE -> {
-                        if (!inbox.hasAudio.getAndSet(true) && BuildConfig.DEBUG)
+                        if (len > 0 && !inbox.hasAudio.getAndSet(true) && BuildConfig.DEBUG)
                             Log.i("DoubaoTts", "reply=${current.version} first synthesized audio len=$len")
                     }
                     Sdk.MESSAGE_TYPE_PLAYER_START_PLAY_AUDIO -> inbox.starts.incrementAndGet()
@@ -205,7 +209,7 @@ internal class DoubaoTtsPlayer(
                     Sdk.MESSAGE_TYPE_PLAYER_AUDIO_DATA -> {
                         if (BuildConfig.DEBUG && !inbox.loggedPlayerAudio.getAndSet(true))
                             Log.i("DoubaoTts", "reply=${current.version} first player PCM len=$len bufferBytes=${data?.size ?: 0}")
-                        return // PCM 不保存、不排队。
+                        return // PCM 不保存、不排队，由 SDK 内置播放器处理。
                     }
                     Sdk.MESSAGE_TYPE_EVENT_SESSION_FINISHED -> inbox.synthesized.set(true)
                     Sdk.MESSAGE_TYPE_ENGINE_ERROR, Sdk.MESSAGE_TYPE_EVENT_CONNECTION_FAILED,
@@ -236,8 +240,7 @@ internal class DoubaoTtsPlayer(
 
     private fun acquireFocus(current: Run) {
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioAttributes(playbackAttributes)
             .setOnAudioFocusChangeListener({ focus ->
                 if (focus == AudioManager.AUDIOFOCUS_LOSS || focus == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
                     current.inbox.failure.set(application.getString(R.string.tts_audio_focus_lost))
@@ -246,7 +249,7 @@ internal class DoubaoTtsPlayer(
             }, main).build()
         current.focus = request
         val result = audioManager.requestAudioFocus(request)
-        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${current.version} audioFocus=$result mediaVolume=${audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)}/${audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)} muted=${audioManager.isStreamMute(AudioManager.STREAM_MUSIC)} mode=${audioManager.mode}")
+        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${current.version} audioFocus=$result playbackUsage=MEDIA mediaVolume=${audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)}/${audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)} muted=${audioManager.isStreamMute(AudioManager.STREAM_MUSIC)} mode=${audioManager.mode}")
         check(result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { "Android requestAudioFocus() 返回值：$result" }
     }
 

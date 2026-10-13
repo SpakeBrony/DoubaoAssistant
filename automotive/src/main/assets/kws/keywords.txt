@@ -1,7 +1,20 @@
 n ǐ h ǎo d òu b āo @你好豆包
+d òu b āo d òu b āo @豆包豆包
 d òu b āo n ǐ h ǎo @豆包你好
 z ài m a d òu b āo @在吗豆包
 d òu b āo z ài m a @豆包在吗
 k ě y ǐ sh uō h uà l e d òu b āo @可以说话了豆包
 sh uō h uà d òu b āo @说话豆包
 d òu b āo sh uō h uà @豆包说话
+b ì z uǐ d òu b āo @闭嘴豆包
+d òu b āo b ì z uǐ @豆包闭嘴
+b ié sh uō h uà d òu b āo @别说话豆包
+d òu b āo b ié sh uō h uà @豆包别说话
+g uān b ì m ài k è f ēng d òu b āo @关闭麦克风豆包
+d òu b āo g uān b ì m ài k è f ēng @豆包关闭麦克风
+t uì x ià d òu b āo @退下豆包
+d òu b āo t uì x ià @豆包退下
+t uì x ià b a d òu b āo @退下吧豆包
+t uì ch ū d òu b āo @退出豆包
+d òu b āo t uì ch ū @豆包退出
+t uì ch ū b a d òu b āo @退出吧豆包

@@ -16,6 +16,7 @@ class OverlayWindowView @JvmOverloads constructor(context: Context, attrs: Attri
     var onDrag: ((Float, Float) -> Unit)? = null
     var onResize: ((Corner, Float, Float) -> Unit)? = null
     var onGestureEnd: (() -> Unit)? = null
+    var resizeEnabled: Boolean = true
     init { clipToOutline = true }
 
     private val density = resources.displayMetrics.density
@@ -40,7 +41,7 @@ class OverlayWindowView @JvmOverloads constructor(context: Context, attrs: Attri
                 downX = event.rawX
                 downY = event.rawY
                 val edge = 28f * density
-                corner = if ((event.x < edge || event.x > width - edge) &&
+                corner = if (resizeEnabled && (event.x < edge || event.x > width - edge) &&
                     (event.y < edge || event.y > height - edge)) {
                     Corner.entries.first { it.left == (event.x < edge) && it.top == (event.y < edge) }
                 } else null
@@ -67,6 +68,7 @@ class OverlayWindowView @JvmOverloads constructor(context: Context, attrs: Attri
                 }
             }
             MotionEvent.ACTION_UP -> {
+                if (tracking && dragging) onDrag?.invoke(event.rawX - downX, event.rawY - downY)
                 if (tracking && !dragging && corner == null) performClick()
                 finishGesture()
             }

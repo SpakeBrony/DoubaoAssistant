@@ -16,18 +16,20 @@ class VoiceCuePlayerTest {
     private fun pool(player: VoiceCuePlayer) = player.javaClass.getDeclaredField("pool")
         .apply { isAccessible = true }.get(player) as SoundPool?
 
-    @Test fun resumePlaysLocalAcknowledgementAt70Percent() {
+    @Test fun bothLocalCuesPlayAt70Percent() {
         VoiceCuePlayer(RuntimeEnvironment.getApplication()).use { player ->
             val sound = shadowOf(checkNotNull(pool(player)))
-            sound.notifyResourceLoaded(R.raw.haode, true)
-            player.play()
-            val plays = sound.getResourcePlaybacks(R.raw.haode)
-            assertEquals(1, plays.size)
-            plays.forEach {
-                assertEquals(0.7f, it.leftVolume, 0f)
-                assertEquals(0.7f, it.rightVolume, 0f)
-                assertEquals(0, it.loop)
-                assertEquals(1f, it.rate, 0f)
+            for (resource in listOf(R.raw.haode, R.raw.wozai)) {
+                sound.notifyResourceLoaded(resource, true)
+                player.play(resource)
+                val plays = sound.getResourcePlaybacks(resource)
+                assertEquals(1, plays.size)
+                plays.forEach {
+                    assertEquals(0.7f, it.leftVolume, 0f)
+                    assertEquals(0.7f, it.rightVolume, 0f)
+                    assertEquals(0, it.loop)
+                    assertEquals(1f, it.rate, 0f)
+                }
             }
         }
     }
@@ -36,10 +38,12 @@ class VoiceCuePlayerTest {
         VoiceCuePlayer(RuntimeEnvironment.getApplication()).use { player ->
             val sound = shadowOf(checkNotNull(pool(player)))
             player.play()
-            player.play()
+            player.play(R.raw.wozai)
             assertFalse(sound.wasResourcePlayed(R.raw.haode))
             sound.notifyResourceLoaded(R.raw.haode, true)
-            assertEquals(1, sound.getResourcePlaybacks(R.raw.haode).size)
+            assertFalse(sound.wasResourcePlayed(R.raw.haode))
+            sound.notifyResourceLoaded(R.raw.wozai, true)
+            assertEquals(1, sound.getResourcePlaybacks(R.raw.wozai).size)
         }
         VoiceCuePlayer(RuntimeEnvironment.getApplication()).use { player ->
             val sound = shadowOf(checkNotNull(pool(player)))
