@@ -18,12 +18,14 @@
 
 | 项目 | 要求 |
 | --- | --- |
-| 设备 | 支持 ARM64 应用的 Android 车机，Android 9（API 28）及以上 |
+| 当前 APK 的设备要求 | 支持 ARM64 应用的 Android 车机，Android 9（API 28）及以上 |
 | 平台声明 | 当前要求 `android.hardware.type.automotive`，面向原生车机应用 |
 | 车辆控制 | 吉利星越 L，且固件提供所需 ECARX 接口和权限 |
 | 网络 | 语音识别、AI 对话和语音合成需要联网 |
 | 凭证 | 语音 App ID、Access Token，以及火山方舟 Ark API Key |
 | 开发环境 | Android Studio、JDK 17 或以上兼容版本、Android SDK 36；使用仓库内 Gradle Wrapper |
+
+当前只打包 ARM64 是项目的构建选择：本地 sherpa-onnx 库包含 ARM32、ARM64、x86 和 x86_64，豆包语音 SDK 包含 ARM32 和 ARM64。其他架构未从原始库中删除，而是通过 `abiFilters` 限制了 APK 的打包范围；详细说明见 [CPU 架构兼容性](项目说明.md#cpu-架构兼容性)。
 
 ## 快速开始
 
