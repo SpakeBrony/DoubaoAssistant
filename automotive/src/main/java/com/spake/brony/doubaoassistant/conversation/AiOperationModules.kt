@@ -15,6 +15,10 @@ internal interface CarOperations {
     suspend fun setSeatHeating(seat: String, level: Int): Boolean
     suspend fun setCirculation(mode: String): Boolean
     suspend fun setRearWindowHeating(enabled: Boolean): Boolean
+    // relative 时 percent 为 +10/-10 个百分点，否则为目标开度。
+    suspend fun controlSunroof(percent: Int, relative: Boolean): String?
+    suspend fun controlSunshade(percent: Int, relative: Boolean): String?
+    suspend fun controlWindow(seat: String, percent: Int, relative: Boolean): AiOperationExecutor.Result
 }
 
 /** 系统能力：Android 启动应用、导航、电话、音乐、音量和红外调用。 */

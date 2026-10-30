@@ -86,7 +86,7 @@
             android:screenOrientation="sensorLandscape"
             android:exported="false" />
         <activity
-            android:name=".ui.PhonePermissionActivity"
+            android:name=".ui.permission.RuntimePermissionActivity"
             android:theme="@style/Theme.DoubaoAssistant.PermissionRequest"
             android:exported="false" />
         <activity

@@ -2,10 +2,11 @@ package com.spake.brony.doubaoassistant.data.network
 
 import android.content.Context
 import android.util.Log
-import com.spake.brony.doubaoassistant.data.repository.CredentialStore
 import com.spake.brony.doubaoassistant.BuildConfig
 import com.spake.brony.doubaoassistant.R
+import com.spake.brony.doubaoassistant.conversation.AiIntentClassification
 import com.spake.brony.doubaoassistant.data.model.ResponseProgress
+import com.spake.brony.doubaoassistant.data.repository.CredentialStore
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,17 +38,20 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
         .retryOnConnectionFailure(false) // 付费生成请求不自动重发。
         .build()
 
-    // 使用全新非流式请求，只返回判断结果；不关联历史、不保存响应或判断文案。
-    suspend fun classify(text: String, instruction: String): Boolean {
+    // 使用全新非流式请求，不关联历史；结果及原始 JSON 交给上层保存到对应用户消息。
+    suspend fun classify(text: String, instruction: String, candidates: Set<String>): AiIntentClassification {
         if (closed.get()) throw IOException(context.getString(R.string.chat_request_failed))
         val credentials = CredentialStore(context).load()
         if (!credentials.ready) throw IOException(context.getString(R.string.chat_credentials_missing))
         val request = Request.Builder()
-            .url("https://ark.cn-beijing.volces.com/api/v3/responses")
+            .url(RESPONSES_URL)
             .header("Authorization", "Bearer ${credentials.arkApiKey}")
             .header("Accept", "application/json")
-            .post(classificationBody(text, instruction).toString()
-                .toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .post(
+                classificationBody(text, instruction, candidates)
+                    .toString()
+                    .toRequestBody(JSON_MEDIA_TYPE),
+            )
             .build()
         val call = client.newCall(request)
         call.timeout().timeout(20, TimeUnit.SECONDS)
@@ -70,9 +74,9 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
                         // 在 OkHttp 回调线程读取，保持取消处理直到整个判断响应解析完成。
                         val decision = try {
                             val source = it.body?.source() ?: error("Empty classification response")
-                            source.request(65_537)
-                            check(source.buffer.size <= 65_536)
-                            parseClassificationResponse(JSONObject(source.readUtf8()))
+                            source.request(MAX_CLASSIFICATION_BYTES + 1)
+                            check(source.buffer.size <= MAX_CLASSIFICATION_BYTES)
+                            parseClassificationResponse(JSONObject(source.readUtf8()), candidates)
                         } catch (_: IOException) {
                             fail(context.getString(R.string.chat_connection_interrupted))
                             return
@@ -95,15 +99,21 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
             return@callbackFlow
         }
         val request = Request.Builder()
-            .url("https://ark.cn-beijing.volces.com/api/v3/responses")
+            .url(RESPONSES_URL)
             .header("Authorization", "Bearer ${credentials.arkApiKey}")
             .header("Accept", "text/event-stream")
-            .post(requestBody(text, previousId, outputSchema).toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .post(
+                requestBody(text, previousId, outputSchema)
+                    .toString()
+                    .toRequestBody(JSON_MEDIA_TYPE),
+            )
             .build()
         val call = client.newCall(request)
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                if (!call.isCanceled()) trySend(ResponseProgress(error = context.getString(R.string.chat_connection_failed)))
+                if (!call.isCanceled()) {
+                    trySend(ResponseProgress(error = context.getString(R.string.chat_connection_failed)))
+                }
                 close()
             }
 
@@ -118,13 +128,15 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
                         val body = response.body ?: error("豆包返回空响应")
                         parser.read(body.source()) { trySend(it) }
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     if (!call.isCanceled()) {
                         // 不回显服务端原始响应或解析异常，避免凭证/用户内容进入错误文案。
                         val message = context.getString(R.string.chat_connection_interrupted)
                         trySend(parser.progress.copy(completedId = null, error = message))
                     }
-                } finally { close() }
+                } finally {
+                    close()
+                }
             }
         })
         awaitClose { call.cancel() }
@@ -133,8 +145,11 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
     private fun httpError(response: Response, redact: (String) -> String): String {
         val fallback = context.getString(R.string.chat_http_failed, response.code)
         // 只读取有限的错误响应，不回显请求头、请求正文或整个服务端响应。
-        val error = try { JSONObject(response.peekBody(16_384).string()).optJSONObject("error") }
-        catch (_: Exception) { null }
+        val error = try {
+            JSONObject(response.peekBody(16_384).string()).optJSONObject("error")
+        } catch (_: Exception) {
+            null
+        }
         if (error == null) return fallback
         fun field(name: String, maxLength: Int): String? = (error.opt(name) as? String)?.let { value ->
             redact(value).filter { !it.isISOControl() || it == '\n' || it == '\t' }.trim()
@@ -157,22 +172,30 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
             try {
                 client.dispatcher.cancelAll()
                 client.connectionPool.evictAll()
-            } finally { executor.shutdown() }
+            } finally {
+                executor.shutdown()
+            }
         }
     }
 
     companion object {
-        internal fun classificationBody(text: String, instruction: String): JSONObject {
-            require(instruction.isNotBlank() && instruction.length <= 2048)
-            val body = requestBody(text, null)
+        private const val RESPONSES_URL = "https://ark.cn-beijing.volces.com/api/v3/responses"
+        private const val MAX_INPUT_LENGTH = 8192
+        private const val MAX_CLASSIFICATION_BYTES = 65_536L
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        internal fun classificationBody(text: String, instruction: String, candidates: Set<String>): JSONObject {
+            require(instruction.isNotBlank() && instruction.length <= MAX_INPUT_LENGTH)
+            val body = requestBody(text, null, AiIntentClassification.schema(candidates))
+            body.getJSONObject("text").getJSONObject("format").put("name", "assistant_intent_classification")
             val user = body.getJSONArray("input").getJSONObject(0)
-            return body.put("stream", false).put("store", false).put("max_output_tokens", 16)
+            return body.put("stream", false).put("store", false).put("max_output_tokens", 512)
                 .put("input", JSONArray()
                     .put(JSONObject().put("role", "system").put("content", instruction))
                     .put(user))
         }
 
-        internal fun parseClassificationResponse(response: JSONObject): Boolean {
+        internal fun parseClassificationResponse(response: JSONObject, candidates: Set<String>): AiIntentClassification {
             check(response.optString("status") == "completed")
             val output = response.getJSONArray("output")
             val text = StringBuilder()
@@ -187,25 +210,27 @@ internal class DoubaoResponsesClient(context: Context) : AutoCloseable {
                     }
                 }
             }
-            return when (text.toString().trim()) {
-                "true" -> true
-                "false" -> false
-                else -> error("Classification must be true or false")
-            }
+            return AiIntentClassification.parse(text.toString(), candidates)
         }
 
         internal fun requestBody(text: String, previousId: String?, outputSchema: JSONObject? = null): JSONObject {
-            require(text.isNotBlank() && text.length <= 8192) { "问题为空或过长" }
+            require(text.isNotBlank() && text.length <= MAX_INPUT_LENGTH) { "问题为空或过长" }
             return JSONObject().apply {
                 put("model", BuildConfig.DOUBAO_CHAT_MODEL)
                 put("stream", true)
                 put("store", true) // previous_response_id 需要平台保存对应上下文。
                 put("thinking", JSONObject().put("type", "disabled"))
                 put("max_output_tokens", 2048)
-                // 只有已经独立判断为操作的正式请求才使用 Schema。
-                val format = if (outputSchema == null) JSONObject().put("type", "text") else JSONObject()
-                    .put("type", "json_schema").put("name", "assistant_actions")
-                    .put("strict", true).put("schema", outputSchema)
+                // 独立意图筛选和正式操作请求分别传入各自的 Schema，闲聊使用 text。
+                val format = if (outputSchema == null) {
+                    JSONObject().put("type", "text")
+                } else {
+                    JSONObject()
+                        .put("type", "json_schema")
+                        .put("name", "assistant_actions")
+                        .put("strict", true)
+                        .put("schema", outputSchema)
+                }
                 put("text", JSONObject().put("format", format))
                 put("input", JSONArray().put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", text)))))

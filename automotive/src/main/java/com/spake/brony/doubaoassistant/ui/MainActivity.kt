@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
-import android.graphics.Typeface
 import android.animation.ValueAnimator
 import android.transition.Fade
 import android.transition.Slide
@@ -14,10 +13,8 @@ import android.view.Gravity
 import android.util.Log
 import android.os.Bundle
 import android.provider.Settings
-import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.viewModels
@@ -26,7 +23,6 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.doOnLayout
-import androidx.core.view.updateLayoutParams
 import com.spake.brony.doubaoassistant.R
 import com.spake.brony.doubaoassistant.data.model.Appearance
 import com.spake.brony.doubaoassistant.data.model.AnswerMode
@@ -45,6 +41,7 @@ import com.spake.brony.doubaoassistant.ui.dialog.ExitAppDialogFragment
 import com.spake.brony.doubaoassistant.ui.dialog.ClearHistoryDialogFragment
 import com.spake.brony.doubaoassistant.ui.dialog.AssistantNameDialogFragment
 import com.spake.brony.doubaoassistant.ui.dialog.MessageInputDialogFragment
+import com.spake.brony.doubaoassistant.ui.dialog.ChatLogsDialogFragment
 import com.spake.brony.doubaoassistant.viewmodel.KwsUiState
 import com.spake.brony.doubaoassistant.viewmodel.KwsViewModel
 
@@ -73,11 +70,12 @@ class MainActivity : BaseActivity() {
         viewModel.loadPreferences(preferences.appearance, preferences.captions, preferences.speed, preferences.assistantName)
         viewModel.setReplyStyle(preferences.replyStyle)
         viewModel.setAiControlEnabled(preferences.aiControlEnabled)
+        viewModel.setDebugMode(preferences.debugMode)
         viewModel.setAnswerMode(preferences.answerMode)
         viewModel.setOverlayStyle(preferences.overlayStyle)
         viewModel.setBackgroundChat(preferences.backgroundChat)
         viewModel.setControlsOnLeft(preferences.controlsOnLeft)
-        binding.root.doOnLayout { applyDesignDimensions(it.width, it.height) }
+        binding.root.doOnLayout { binding.applyDesignDimensions(it.width, it.height) }
         onBackPressedDispatcher.addCallback(this) {
             if (viewModel.uiState.value.settingsOpen) closeSettings() else {
                 isEnabled = false
@@ -100,6 +98,8 @@ class MainActivity : BaseActivity() {
         super.onResume()
         if (!hasMicrophone() || !CredentialStore(this).isConfigured) { returnToPermission(); return }
         viewModel.setBackgroundChat(preferences.backgroundChat)
+        viewModel.setDebugMode(preferences.debugMode)
+        sendControl(KwsService.ACTION_CHECK_HISTORY)
         if (intent.getBooleanExtra(EXTRA_AUTO_START, false)) {
             intent.removeExtra(EXTRA_AUTO_START)
             if (!viewModel.uiState.value.isListening) startListening()
@@ -279,6 +279,18 @@ class MainActivity : BaseActivity() {
         viewModel.setAiControlEnabled(enabled)
     }
 
+    fun toggleDebugMode() {
+        preferences.debugMode = !viewModel.uiState.value.debugMode
+        viewModel.setDebugMode(preferences.debugMode)
+    }
+
+    fun showChatLogs() {
+        if (preferences.debugMode && !supportFragmentManager.isStateSaved &&
+            supportFragmentManager.findFragmentByTag("chat_logs") == null) {
+            ChatLogsDialogFragment().showNow(supportFragmentManager, "chat_logs")
+        }
+    }
+
     fun setAnswerMode(mode: AnswerMode) {
         preferences.answerMode = mode
         viewModel.setAnswerMode(mode)
@@ -373,60 +385,6 @@ class MainActivity : BaseActivity() {
             .show()
     }
 
-    private fun applyDesignDimensions(width: Int, height: Int) {
-        val density = resources.displayMetrics.density
-        val dimensions = DesignDimensions(width / density, height / density)
-        fun dp(value: Float) = (value * density + .5f).toInt()
-        fun TextView.size(value: Float) = setTextSize(TypedValue.COMPLEX_UNIT_SP, value)
-        binding.topToolbar.updateLayoutParams { this.height = dp(dimensions.toolbar) }
-        val topPadding = if (dimensions.compact || dimensions.width <= 850) 12f else 24f
-        binding.topToolbar.setPadding(dp(dimensions.safeX), dp(topPadding), dp(dimensions.safeX), 0)
-        binding.conversation.setPadding(binding.conversation.paddingLeft, dp(dimensions.conversationTop),
-            binding.conversation.paddingRight, dp(28f))
-        binding.conversation.setDimensions(dimensions)
-        val bottomPadding = if (dimensions.compact) 12f else if (dimensions.ultraWide) 24f else 26f
-        val statusHeight = if (dimensions.compact) 82f else 96f
-        binding.bottomArea.updateLayoutParams { this.height = dp(dimensions.bottom) }
-        binding.bottomArea.setPadding(0, 0, 0, dp(bottomPadding))
-        binding.statusGroup.updateLayoutParams { this.height = dp(statusHeight) }
-        binding.voiceMark.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = dp(if (dimensions.compact) 8f else 13f) }
-        binding.rightControls.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-            leftMargin = dp(dimensions.safeX)
-            rightMargin = dp(dimensions.safeX)
-        }
-        binding.listeningStatus.size(dimensions.statusText)
-        binding.statusSupport.size((dimensions.width * .01f).coerceIn(14f, 20f))
-        binding.inputContainer.updateLayoutParams {
-            this.width = dp(dimensions.control)
-            this.height = dp(dimensions.control)
-        }
-        binding.inputButton.size(dimensions.control * .34f)
-        listOf(binding.toggleListening, binding.toggleChat, binding.endSession).forEach { button ->
-            button.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                this.width = dp(dimensions.control)
-                this.height = dp(dimensions.control)
-                topMargin = dp(dimensions.controlGap)
-            }
-            val padding = dp(dimensions.control * .325f)
-            button.setPadding(padding, padding, padding, padding)
-        }
-        with(binding.settings) {
-            settingsPanel.updateLayoutParams { this.width = dp(dimensions.panelWidth) }
-            settingsColumn.setPadding(dp(dimensions.panelPadding), dp(if (dimensions.compact || dimensions.ultraWide) 20f else 42f), dp(dimensions.panelPadding), dp(24f))
-            settingsHeader.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = dp(if (dimensions.compact || dimensions.ultraWide) 0f else 26f) }
-            settingsTitle.size((dimensions.width * .02f).coerceIn(25f, 38f))
-            settingsTitle.typeface = Typeface.create(settingsTitle.typeface, 500, false)
-            listOf(nameLabel, appearanceLabel, layoutLabel, captionsLabel, speedLabel, replyStyleLabel, aiControlLabel, answerModeLabel, credentialsLabel, permissionLabel, backgroundChatLabel, overlayStyleLabel, historyLabel).forEach { it.size(dimensions.settingLabel) }
-            nameValue.size(dimensions.settingLabel)
-            listOf(nameDetail, captionsDetail, aiControlDetail, answerModeDetail, credentialsDetail, permissionDetail, backgroundChatDetail, historyDetail).forEach { it.size(dimensions.settingDetail) }
-            listOf(nameSection, appearanceSection, layoutSection, captionsSection, speedSection, replyStyleSection, aiControlSection, answerModeSection, credentialsSection, permissionSection, backgroundChatSection, historySection).forEach { it.setPadding(0, dp(dimensions.settingSpacing), 0, dp(dimensions.settingSpacing)) }
-            overlayStyleSection.setPadding(0, 0, 0, dp(dimensions.settingSpacing))
-            appearanceOptions.updateLayoutParams<ViewGroup.MarginLayoutParams> { this.height = dp(dimensions.appearanceHeight); topMargin = dp(if (dimensions.compact || dimensions.ultraWide) 14f else 23f) }
-            speedOptions.updateLayoutParams<ViewGroup.MarginLayoutParams> { topMargin = dp(if (dimensions.compact || dimensions.ultraWide) 14f else 23f) }
-            listOf(themeSystemLabel, themeLightLabel, themeDarkLabel).forEach { it.size((dimensions.width * .01f).coerceIn(13f, 19f)) }
-            listOf(speedSlow, speedNormal, speedFast, layoutLeft, layoutRight, replyStyleMinimal, replyStyleSimple, replyStyleDetailed, answerModeSingle, answerModeChat, overlayStyleMinimal, overlayStyleCompact, overlayStyleDetailed).forEach { it.size((dimensions.width * .011f).coerceIn(16f, 21f)) }
-        }
-    }
 
     companion object {
         const val EXTRA_AUTO_START = "com.spake.brony.doubaoassistant.AUTO_START"

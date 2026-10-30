@@ -53,11 +53,12 @@
     <string name="voice_assistant_name">助手称呼</string>
     <string name="voice_change_name">修改</string>
     <string name="voice_name_dialog_title">修改助手称呼</string>
-    <string name="voice_name_hint">请输入 2～4 个汉字</string>
-    <string name="voice_name_invalid">称呼需要是 2～4 个汉字</string>
+    <string name="voice_name_hint">请输入 2～3 个汉字</string>
+    <string name="voice_name_invalid">称呼需要是 2～3 个汉字</string>
     <string name="voice_name_unsupported">这个称呼暂不支持语音识别，请换用常用汉字</string>
     <string name="voice_name_failed">暂时无法修改称呼，请重试</string>
     <string name="voice_name_commands">说「你好%1$s」或「%1$s说话」恢复聊天，「%1$s退下」回到桌面</string>
+    <string name="voice_reply_elapsed">距上一条用户消息 %1$s</string>
     <string name="voice_background_chat">后台悬浮聊天</string>
     <string name="voice_background_chat_detail">退到后台显示聊天小窗，长按拖动、四角缩放；位置和大小自动保存，需要悬浮窗权限；关麦后小窗仍保留</string>
     <string name="voice_overlay_move">长按拖动窗口，拖动四角调整大小</string>

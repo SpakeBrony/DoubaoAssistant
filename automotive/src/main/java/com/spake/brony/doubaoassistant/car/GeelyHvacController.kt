@@ -2,6 +2,9 @@ package com.spake.brony.doubaoassistant.car
 
 import android.content.Context
 import android.util.Log
+import com.spake.brony.doubaoassistant.R
+import com.spake.brony.doubaoassistant.conversation.AiOperationFailure
+import com.spake.brony.doubaoassistant.conversation.AiOperationExecutor
 import com.spake.brony.doubaoassistant.conversation.CarOperations
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Proxy
@@ -22,6 +25,7 @@ import kotlin.math.round
 /** 使用车机系统提供的 ECARX API；手机缺少该 API 时返回失败，不打包占位 SDK。 */
 internal class GeelyHvacController(
     context: Context,
+    private val aiControlEnabled: () -> Boolean,
     private val loadClass: (String) -> Class<*> = context.classLoader::loadClass,
 ) : CarOperations {
     private val appContext = context.applicationContext
@@ -118,6 +122,104 @@ internal class GeelyHvacController(
     // 对应原项目 behindDefrostClick：后窗电加热/后除霜使用全局区域，回读确认开关状态。
     override suspend fun setRearWindowHeating(enabled: Boolean): Boolean = setSwitch(REAR_DEFROST, GLOBAL_ZONE, enabled)
 
+    override suspend fun controlSunroof(percent: Int, relative: Boolean): String? =
+        controlWindowPosition(ROOF_ZONE, R.string.car_sunroof, percent, relative)
+
+    override suspend fun controlSunshade(percent: Int, relative: Boolean): String? =
+        controlWindowPosition(SUNSHADE_ZONE, R.string.car_sunshade, percent, relative)
+
+    override suspend fun controlWindow(seat: String, percent: Int, relative: Boolean): AiOperationExecutor.Result {
+        val seats = when (seat) {
+            "all" -> listOf("driver", "passenger", "rear_left", "rear_right")
+            "front" -> listOf("driver", "passenger")
+            "rear" -> listOf("rear_left", "rear_right")
+            else -> listOf(seat)
+        }
+        val windows = seats.map { WINDOW_AREAS[it] ?: return AiOperationExecutor.Result(false) }
+        if (windows.size == 1) {
+            val (zone, name) = windows.single()
+            val reply = controlWindowPosition(zone, name, percent, relative)
+            return AiOperationExecutor.Result(reply != null, reply)
+        }
+        var succeeded = 0
+        for ((zone, name) in windows) {
+            currentCoroutineContext().ensureActive()
+            if (!aiControlEnabled()) break
+            try {
+                if (controlWindowPosition(zone, name, percent, relative) != null) succeeded++
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val detail = if (error is AiOperationFailure) appContext.getString(error.reply) else error.message
+                Log.w(TAG, "Window group failed zone=$zone: $detail", error)
+            }
+        }
+        // 全部失败交给对话流程使用本次 failure_reply，只有部分失败需要汇总文案。
+        if (succeeded == 0) return AiOperationExecutor.Result(false)
+        val action = appContext.getString(when {
+            relative && percent > 0 || !relative && percent == 100 -> R.string.car_window_action_open
+            relative && percent < 0 || !relative && percent == 0 -> R.string.car_window_action_close
+            else -> R.string.car_window_action_adjust
+        })
+        val name = appContext.getString(when (seat) {
+            "all" -> R.string.car_windows_all
+            "front" -> R.string.car_windows_front
+            else -> R.string.car_windows_rear
+        })
+        val reply = when (succeeded) {
+            windows.size -> appContext.getString(R.string.car_window_group_success, name, action)
+            else -> appContext.getString(R.string.car_window_group_partial_failed, action)
+        }
+        return AiOperationExecutor.Result(succeeded == windows.size, reply)
+    }
+
+    private suspend fun controlWindowPosition(zone: Int, nameResource: Int, percent: Int, relative: Boolean): String? {
+        if (relative) {
+            if (percent != -10 && percent != 10) return null
+        } else if (percent !in 0..100) return null
+        var target = percent
+        val confirmed = withConnection("window zone=$zone percent=$percent relative=$relative", timeoutMillis = 20_000) { function, functionApi ->
+            val support = functionApi.getMethod("isFunctionSupported", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+            // 不同 SDK 的枚举序号不同，按 active 名称判断固件能力。
+            for (property in intArrayOf(WINDOW_POSITION, WINDOW_CURRENT_POSITION)) {
+                val status = support.invoke(function, property, zone) as? Enum<*>
+                if (status?.name?.equals("active", ignoreCase = true) != true) {
+                    throw AiOperationFailure(R.string.car_roof_position_unsupported)
+                }
+            }
+            val get = functionApi.getMethod("getFunctionValue", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+            fun readPosition(): Int {
+                val value = get.invoke(function, WINDOW_CURRENT_POSITION, zone) as Int
+                if (value !in 0..100) throw AiOperationFailure(R.string.car_roof_position_unavailable)
+                return value
+            }
+            val current = readPosition()
+            target = if (relative) (current + percent).coerceIn(0, 100) else percent
+            // 当前位置相同也下发，避免部件正在离开目标时漏掉反向关闭指令。
+            val set = functionApi.getMethod("setFunctionValue", Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+            currentCoroutineContext().ensureActive()
+            val accepted = set.invoke(function, WINDOW_POSITION, zone, target) == true
+            Log.i(TAG, "Set window zone=$zone current=$current target=$target accepted=$accepted")
+            if (!accepted) throw AiOperationFailure(R.string.car_roof_position_rejected)
+            // 确认实际位置，不把目标寄存器的写入成功当作运动完成。
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                if (readPosition() == target) break
+                delay(100)
+            }
+            Log.i(TAG, "Confirmed window zone=$zone target=$target")
+            true
+        }
+        if (!confirmed) throw AiOperationFailure(R.string.car_roof_position_unconfirmed)
+        val name = appContext.getString(nameResource)
+        return when (target) {
+            0 -> appContext.getString(R.string.car_roof_closed, name)
+            100 -> appContext.getString(R.string.car_roof_opened, name)
+            else -> appContext.getString(R.string.car_roof_position_result, name, target)
+        }
+    }
+
     // 前排共享风速：保持当前手动/AUTO 模式，手动 1～9 档，AUTO 1～5 档。
     override suspend fun setFanSpeed(level: Int): Boolean {
         if (level !in 1..9) return false
@@ -208,6 +310,7 @@ internal class GeelyHvacController(
 
     private suspend fun withConnection(
         description: String,
+        timeoutMillis: Long = 5_000,
         action: suspend (function: Any, functionApi: Class<*>) -> Boolean,
     ): Boolean = withContext(Dispatchers.IO) {
         // 等上一条指令释放连接后再操作，防止打断回答时新旧连接互相干扰。
@@ -215,7 +318,7 @@ internal class GeelyHvacController(
             val connection = Connection()
             try {
                 // 包含连接和写入后的确认；等待期间可被“闭嘴”等本地命令取消。
-                val result = withTimeoutOrNull(5_000) {
+                val result = withTimeoutOrNull(timeoutMillis) {
                     val function = connection.open()
                     val functionApi = loadClass("com.ecarx.xui.adaptapi.car.base.ICarFunction")
                     action(function, functionApi)
@@ -224,6 +327,8 @@ internal class GeelyHvacController(
                 result ?: false
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (error: AiOperationFailure) {
+                throw error
             } catch (error: Exception) {
                 val cause = (error as? InvocationTargetException)?.targetException ?: error
                 Log.e(TAG, "HVAC control failed ($description): ${cause.javaClass.simpleName}: ${cause.message}", cause)
@@ -294,6 +399,21 @@ internal class GeelyHvacController(
         const val AC = 0x10010300 // AC 制冷开关，Int：1 开启、0 关闭。
         const val AUTO = 0x10010200 // AUTO 自动空调模式，Int：1 开启、0 关闭。
         const val REAR_DEFROST = 0x10040300 // HVAC_FUNC_DEFROST_REAR：后窗加热/后除霜，1 开启、0 关闭。
+        const val WINDOW_POSITION = 0x21030300 // BCM_FUNC_WINDOW_POS：目标开度，整数 0～100。
+        const val WINDOW_CURRENT_POSITION = 0x21030600 // BCM_FUNC_WINDOW_CURRENT_POS：实际开度。
+        const val ROOF_ZONE = 4 // GlyCarAreaId.WINDOW_ROOF_TOP。
+        // shortcut: 参考 SDK 的 WINDOW_ROOF_ABAT_VENT 区域，需实车确认遮阳帘映射；固件不支持时拒绝下发。
+        const val SUNSHADE_ZONE = 8
+        const val WINDOW_FRONT_LEFT_ZONE = 16 // GlyCarAreaId.WINDOW_ROW_1_LEFT，左前/主驾。
+        const val WINDOW_FRONT_RIGHT_ZONE = 32 // GlyCarAreaId.WINDOW_ROW_1_RIGHT，右前/副驾。
+        const val WINDOW_REAR_LEFT_ZONE = 256 // GlyCarAreaId.WINDOW_ROW_2_LEFT。
+        const val WINDOW_REAR_RIGHT_ZONE = 512 // GlyCarAreaId.WINDOW_ROW_2_RIGHT。
+        val WINDOW_AREAS = mapOf(
+            "driver" to (WINDOW_FRONT_LEFT_ZONE to R.string.car_window_front_left),
+            "passenger" to (WINDOW_FRONT_RIGHT_ZONE to R.string.car_window_front_right),
+            "rear_left" to (WINDOW_REAR_LEFT_ZONE to R.string.car_window_rear_left),
+            "rear_right" to (WINDOW_REAR_RIGHT_ZONE to R.string.car_window_rear_right),
+        )
         const val FAN = 0x10020100 // 手动风速，档位编码 0x10020101～09。
         const val FAN_AUTO = 0x10020200 // 自动风速，采用原项目的五档映射。
         const val FRONT_ZONE = 8 // 原项目前排风速区域；不是温度使用的主驾区域 1。

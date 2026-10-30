@@ -50,6 +50,7 @@
                     android:fadingEdgeLength="28dp"
                     app:conversationContent="@{viewModel.uiState.conversation}"
                     app:conversationControlsLeft="@{viewModel.uiState.controlsOnLeft}"
+                    app:conversationDebugMode="@{viewModel.uiState.debugMode}"
                     app:showCaptions="@{viewModel.uiState.captions}" />
                 <LinearLayout android:id="@+id/bottom_area"
                     android:clipToPadding="false"

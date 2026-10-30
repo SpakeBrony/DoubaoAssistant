@@ -37,18 +37,18 @@ import com.spake.brony.doubaoassistant.data.repository.ChatHistoryRepository
 import com.spake.brony.doubaoassistant.data.repository.ConversationRepository
 import com.spake.brony.doubaoassistant.data.repository.KwsRepository
 import com.spake.brony.doubaoassistant.service.notification.VoiceNotification
-import com.spake.brony.doubaoassistant.speech.asr.AsrCommands
-import com.spake.brony.doubaoassistant.speech.asr.AsrIntentPrompt
+import com.spake.brony.doubaoassistant.conversation.ConversationCommands
+import com.spake.brony.doubaoassistant.conversation.AiIntentPrompt
 import com.spake.brony.doubaoassistant.speech.asr.AsrController
 import com.spake.brony.doubaoassistant.speech.asr.DoubaoAsrRecognizer
 import com.spake.brony.doubaoassistant.speech.audio.MicrophoneRecorder
-import com.spake.brony.doubaoassistant.speech.audio.VoiceCuePlayer
+import com.spake.brony.doubaoassistant.speech.audio.VoiceAudioPlayer
 import com.spake.brony.doubaoassistant.speech.audio.VoiceLevelMeter
 import com.spake.brony.doubaoassistant.speech.kws.KwsModel
 import com.spake.brony.doubaoassistant.speech.kws.KwsRecognizer
 import com.spake.brony.doubaoassistant.speech.tts.DoubaoTtsPlayer
 import com.spake.brony.doubaoassistant.ui.overlay.ChatOverlay
-import com.spake.brony.doubaoassistant.ui.PhonePermissionActivity
+import com.spake.brony.doubaoassistant.ui.permission.RuntimePermissionActivity
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
@@ -63,7 +63,7 @@ class KwsService : Service() {
     private val worker = Executors.newSingleThreadExecutor()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val asr = AsrController()
-    private val voiceCues = lazy { VoiceCuePlayer(applicationContext) }
+    private val voiceCues = lazy { VoiceAudioPlayer(applicationContext) }
     private val overlay = lazy {
         ChatOverlay(applicationContext,
             onToggleChat = { paused -> controlChat(resume = paused) },
@@ -73,7 +73,7 @@ class KwsService : Service() {
     }
     @Volatile private var backgroundChatAvailable = false
     private val overlayPermissionListener = AppOpsManager.OnOpChangedListener { _, _ ->
-        main.post { if (!destroyed) publish(snapshot) }
+        main.post { if (!destroyed) synchronizeState(snapshot) }
     }
     private val responses by lazy { DoubaoResponsesClient(applicationContext) }
     private val information = lazy { InformationController(applicationContext) }
@@ -99,7 +99,7 @@ class KwsService : Service() {
     private val notifications by lazy { VoiceNotification(applicationContext) }
     private val operationExecutor by lazy {
         AiOperationExecutor(
-            car = GeelyHvacController(applicationContext),
+            car = GeelyHvacController(applicationContext, aiControlEnabled = { preferences.aiControlEnabled }),
             system = SystemOperationController(applicationContext),
             api = information.value,
         )
@@ -129,7 +129,9 @@ class KwsService : Service() {
             answerMode = { preferences.answerMode },
             onSingleQuestionRecognized = ::stopSingleAnswerRecognition,
             executeOperation = operationExecutor::execute,
-            judgeOperation = { text -> responses.classify(text, AsrIntentPrompt.classificationPrompt) },
+            judgeOperation = { text, candidates ->
+                responses.classify(text, AiIntentPrompt.classificationInstructionFor(text), candidates)
+            },
             responses = responses::stream,
         )
     }
@@ -149,7 +151,7 @@ class KwsService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // 提前加载本地恢复提示音，避免首次口令等待解码。
+        // 主线程创建本地 MP3 提示音播放器；TTS 由 AudioTrack 流式播放。
         voiceCues.value
         getSystemService(AppOpsManager::class.java).startWatchingMode(
             AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, packageName, overlayPermissionListener)
@@ -162,18 +164,19 @@ class KwsService : Service() {
                 val messages = history.latest(topic.id)
                 // 读取磁盘期间用户可能已确认新话题，旧记录不能重新出现在页面。
                 if (ConversationRepository.activeTopic == topicAtStart) conversation.restoreHistory(topic, messages)
+                clearExpiredHistory()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (_: Exception) { conversation.onHistoryError() }
             finally {
                 if (!destroyed) {
                     historyReady = true
-                    publish(snapshot)
+                    synchronizeState(snapshot)
                     historyLoaded.complete(Unit)
                 }
             }
         }
         scope.launch {
-            KwsRepository.isUiVisible.collect { publish(snapshot) }
+            KwsRepository.isUiVisible.collect { synchronizeState(snapshot) }
         }
         scope.launch { ConversationRepository.snapshot.collect { updateOverlay() } }
         scope.launch { AsrRepository.snapshot.collect { updateOverlay() } }
@@ -200,7 +203,7 @@ class KwsService : Service() {
                         singleAnswerWaiting = activeRun != 0L
                         sessionStarted = true
                         AsrRepository.clear()
-                        publish(snapshot.copy(
+                        synchronizeState(snapshot.copy(
                             status = if (microphoneClosed) ListeningStatus.STOPPED else snapshot.status,
                             chatPaused = !microphoneClosed && snapshot.chatPaused,
                             error = null,
@@ -215,19 +218,24 @@ class KwsService : Service() {
                 }
             }
             ACTION_REFRESH_BACKGROUND -> {
-                publish(snapshot)
+                synchronizeState(snapshot)
                 if (activeRun == 0L && !microphoneClosed && !conversation.hasActiveReply) stopSelf()
             }
             ACTION_REPLAY -> intent?.getStringExtra(EXTRA_MESSAGE_ID)
                 ?.takeIf { it.isNotBlank() }?.let(conversation::replay)
             ACTION_PAUSE, ACTION_RESUME -> controlChat(resume = action == ACTION_RESUME)
+            ACTION_CHECK_HISTORY -> {
+                val checkNeeded = historyReady
+                scope.launch {
+                    historyLoaded.await()
+                    if (destroyed) return@launch
+                    // 冷启动已在恢复历史时检查，后台返回则重新查询。
+                    if (checkNeeded) clearExpiredHistory()
+                    if (activeRun == 0L && !microphoneClosed && !conversation.hasActiveReply) stopSelf(startId)
+                }
+            }
             ACTION_END_TOPIC, ACTION_CLEAR_HISTORY -> {
-                asrRequest = asrRequest.copy(generation = asrRequest.generation + 1,
-                    topicGeneration = asrRequest.topicGeneration + 1)
-                AsrRepository.clear()
-                conversation.newTopic()
-                if (action == ACTION_CLEAR_HISTORY) history.clearAll(checkNotNull(ConversationRepository.activeTopic))
-                publish(snapshot.copy(command = null))
+                resetTopic(clearHistory = action == ACTION_CLEAR_HISTORY)
                 if (activeRun == 0L && !microphoneClosed) stopSelf()
             }
             ACTION_STOP -> stopListening(preserveReply = true)
@@ -237,6 +245,30 @@ class KwsService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    private suspend fun clearExpiredHistory() {
+        val topic = ConversationRepository.activeTopic
+        val topicGeneration = asrRequest.topicGeneration
+        val cutoff = System.currentTimeMillis() - 60L * 60 * 60 * 1000
+        try {
+            val lastTime = history.lastMessageTime() ?: return
+            if (lastTime <= 0 || lastTime >= cutoff || destroyed ||
+                asrRequest.topicGeneration != topicGeneration || ConversationRepository.activeTopic != topic) return
+            // 查询期间的新消息已显示但可能仍在排队落盘，不能按旧查询结果清除它。
+            if (ConversationRepository.snapshot.value.content.messages.any { it.timeMillis >= cutoff }) return
+            resetTopic(clearHistory = true)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { conversation.onHistoryError() }
+    }
+
+    private fun resetTopic(clearHistory: Boolean) {
+        asrRequest = asrRequest.copy(generation = asrRequest.generation + 1,
+            topicGeneration = asrRequest.topicGeneration + 1)
+        AsrRepository.clear()
+        conversation.newTopic()
+        if (clearHistory) history.clearAll(checkNotNull(ConversationRepository.activeTopic))
+        synchronizeState(snapshot.copy(command = null))
     }
 
     private fun startListening() {
@@ -267,7 +299,7 @@ class KwsService : Service() {
             } else if (snapshot.chatPaused) {
                 asr.onCommand(AsrCommand.STOP_REPLY)
             }
-            publish(snapshot.copy(
+            synchronizeState(snapshot.copy(
                 status = ListeningStatus.STARTING,
                 keyword = "",
                 command = null,
@@ -303,7 +335,7 @@ class KwsService : Service() {
             capture.start()
             val echoCancellation = capture.echoCancellationEnabled
             main.post {
-                if (activeRun == run) publish(snapshot.copy(
+                if (activeRun == run) synchronizeState(snapshot.copy(
                     status = ListeningStatus.LISTENING, echoCancellation = echoCancellation))
             }
             val pcm = ShortArray(1600)
@@ -356,7 +388,7 @@ class KwsService : Service() {
         KwsRepository.publishAudioLevel(0f)
         val microphoneStopped = microphone?.stop() ?: true
         val stopError = error ?: if (microphoneStopped) null else getString(R.string.voice_command_mic_failed)
-        publish(snapshot.copy(
+        synchronizeState(snapshot.copy(
             status = if (stopError == null) ListeningStatus.STOPPED else ListeningStatus.ERROR,
             command = null,
             echoCancellation = false,
@@ -376,7 +408,7 @@ class KwsService : Service() {
         // 问题确认后只停 ASR，当前 AI/TTS 继续，保留 KWS 等待下一次口令。
         singleAnswerWaiting = true
         asr.onCommand(AsrCommand.STOP_REPLY)
-        publish(snapshot.copy(command = null))
+        synchronizeState(snapshot.copy(command = null))
     }
 
     private fun finishClosedMicrophone() {
@@ -399,33 +431,48 @@ class KwsService : Service() {
         }
     }
 
-    private fun publish(value: KwsSnapshot) {
+    private fun synchronizeState(value: KwsSnapshot) {
         val visible = KwsRepository.isUiVisible.value
         val running = activeRun != 0L && (value.status == ListeningStatus.LISTENING || value.status == ListeningStatus.STARTING)
+        updateBackgroundChat(visible, running)
+        asr.onUiVisibilityChanged(visible, backgroundChatAvailable)
+        snapshot = resolveSnapshot(value, running)
+        val requested = snapshot.asrRequested
+        updateAsrRequest(requested)
+        updateConversationAvailability(value, requested)
+        KwsRepository.publish(snapshot)
+        updateOverlay()
+    }
+
+    private fun updateBackgroundChat(visible: Boolean, running: Boolean) {
         backgroundChatAvailable = if (!destroyed && !visible && (running || microphoneClosed) && preferences.backgroundChat && Settings.canDrawOverlays(this)) {
             overlay.value.show(preferences.appearance, preferences.overlayStyle)
         } else {
             if (overlay.isInitialized()) overlay.value.close()
             false
         }
-        asr.onUiVisibilityChanged(visible, backgroundChatAvailable)
-        snapshot = value.copy(
+    }
+
+    private fun resolveSnapshot(value: KwsSnapshot, running: Boolean): KwsSnapshot =
+        value.copy(
             mode = asr.mode,
             chatPaused = if (running) asr.mode == AssistantMode.MUTED else value.chatPaused,
             asrRequested = historyReady &&
                 value.status == ListeningStatus.LISTENING && asr.asrRequested,
         )
-        val requested = snapshot.asrRequested
+
+    private fun updateAsrRequest(requested: Boolean) {
         if (requested != asrRequest.enabled) {
             asrRequest = asrRequest.copy(enabled = requested, generation = asrRequest.generation + 1)
             if (!requested) AsrRepository.stop()
         }
-        val preserveReply = microphoneClosed || singleAnswerWaiting || PhonePermissionActivity.hasPendingRequest ||
+    }
+
+    private fun updateConversationAvailability(value: KwsSnapshot, requested: Boolean) {
+        val preserveReply = microphoneClosed || singleAnswerWaiting || RuntimePermissionActivity.hasPendingRequest ||
             (information.isInitialized() && information.value.hasActiveQuery) ||
             (value.status == ListeningStatus.STARTING && conversation.hasActiveReply)
         conversation.setEnabled((singleAnswerWaiting || !snapshot.chatPaused) && (preserveReply || requested), listening = requested)
-        KwsRepository.publish(snapshot)
-        updateOverlay()
     }
 
     private fun controlChat(resume: Boolean) {
@@ -434,11 +481,11 @@ class KwsService : Service() {
             asr.onUiVisibilityChanged(KwsRepository.isUiVisible.value, backgroundChatAvailable)
             if (resume) asr.onCommand(KwsCommand.RESUME) else asr.onCommand(AsrCommand.STOP_REPLY)
             if (resume) restartAsrRequest()
-            publish(snapshot.copy(command = null))
+            synchronizeState(snapshot.copy(command = null))
         } else {
             microphoneClosed = true
             sessionStarted = true
-            publish(snapshot.copy(command = null, chatPaused = !resume))
+            synchronizeState(snapshot.copy(command = null, chatPaused = !resume))
             foregroundClosedMicrophone()
         }
     }
@@ -451,7 +498,7 @@ class KwsService : Service() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (overlay.isInitialized()) overlay.value.close()
-        publish(snapshot)
+        synchronizeState(snapshot)
     }
 
     private fun restartAsrRequest() {
@@ -481,7 +528,7 @@ class KwsService : Service() {
     private fun pauseRecognition(value: AsrSnapshot) {
         singleAnswerWaiting = false
         asr.onCommand(AsrCommand.STOP_REPLY)
-        publish(snapshot)
+        synchronizeState(snapshot)
         AsrRepository.publish(value)
     }
 
@@ -504,18 +551,17 @@ class KwsService : Service() {
             conversation.clearRecognition()
             executeVoiceCommand(action, keyword)
         }
-        publish(snapshot.copy(keyword = keyword ?: snapshot.keyword, command = command,
+        synchronizeState(snapshot.copy(keyword = keyword ?: snapshot.keyword, command = command,
             detectionCount = snapshot.detectionCount + if (keyword != null) 1 else 0))
         if (action == null) {
-            val name = preferences.assistantName
-            val greeting = keyword in listOf("你好$name", "$name$name", "${name}你好", "在吗$name", "${name}在吗")
+            val greeting = KwsCommand.isGreeting(keyword, preferences.assistantName)
             recordVoiceCommand(getString(if (greeting) R.string.voice_command_awake else R.string.voice_command_stopped), keyword)
             voiceCues.value.play(if (greeting) R.raw.wozai else R.raw.haode)
         }
     }
 
     private fun executeVoiceCommand(command: AsrCommand, keyword: String? = null) {
-        val reply = getString(AsrCommands.rules.first { it.command == command }.reply)
+        val reply = getString(ConversationCommands.rules.first { it.command == command }.reply)
         when (command) {
             AsrCommand.CLOSE_MICROPHONE -> {
                 stopListening(preserveReply = true)
@@ -529,7 +575,7 @@ class KwsService : Service() {
                     return
                 }
                 conversation.stopSession()
-                publish(snapshot.copy(command = null))
+                synchronizeState(snapshot.copy(command = null))
             }
             AsrCommand.RETURN_HOME -> {
                 try {
@@ -542,7 +588,7 @@ class KwsService : Service() {
                 singleAnswerWaiting = false
                 if (submittingText && activeRun == 0L) conversation.restartListening()
                 asr.onCommand(command, keepChatOnReturnHome = preferences.backgroundChat && Settings.canDrawOverlays(this))
-                publish(snapshot.copy(command = null))
+                synchronizeState(snapshot.copy(command = null))
             }
         }
         recordVoiceCommand(reply, keyword)
@@ -598,6 +644,7 @@ class KwsService : Service() {
         const val ACTION_EXIT = "com.spake.brony.doubaoassistant.EXIT_APP"
         const val ACTION_END_TOPIC = "com.spake.brony.doubaoassistant.END_TOPIC"
         const val ACTION_CLEAR_HISTORY = "com.spake.brony.doubaoassistant.CLEAR_HISTORY"
+        const val ACTION_CHECK_HISTORY = "com.spake.brony.doubaoassistant.CHECK_HISTORY"
         const val ACTION_REFRESH_BACKGROUND = "com.spake.brony.doubaoassistant.REFRESH_BACKGROUND"
         const val ACTION_PAUSE = "com.spake.brony.doubaoassistant.PAUSE_CHAT"
         const val ACTION_RESUME = "com.spake.brony.doubaoassistant.RESUME_CHAT"

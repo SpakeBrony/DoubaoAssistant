@@ -26,8 +26,19 @@ internal object AiResponseSchema {
     private val seat = choice("driver", "passenger").put("description", "未指定位置默认主驾driver。")
     private val direction = choice("increase", "decrease")
     private val channel = choice("media", "navigation", "call")
+    private fun positionSlots(optional: Map<String, JSONObject> = emptyMap()) =
+        JSONObject().put("anyOf", JSONArray(listOf(
+            slots(mapOf("percent" to value("integer").put("minimum", 0).put("maximum", 100)
+                .put("description", "目标打开程度：打开X%填X，关闭X%填100-X；0全关、100全开，与当前位置无关。")), optional),
+            slots(mapOf("adjustment" to choice(-10, 10)
+                .put("description", "打开一点为10，关闭一点为-10；由程序按当前实际开度调整。")), optional),
+        )))
+
     private val definitions = mapOf(
         "switch" to slots(mapOf("enabled" to value("boolean"))),
+        "roof_position" to positionSlots(),
+        "window_position" to positionSlots(mapOf("seat" to choice("driver", "passenger", "rear_left", "rear_right", "all", "front", "rear")
+            .put("description", "默认主驾driver=左前，passenger=副驾/右前，rear_left=左后，rear_right=右后；all=全部，front=前面/前座，rear=后面/后座，组操作只生成一项。"))),
         "temperature" to slots(mapOf("temperature" to value("number")), mapOf("seat" to seat)),
         "temperature_adjustment" to slots(mapOf("direction" to direction), mapOf("amount" to value("number"), "seat" to seat)),
         "fan" to slots(mapOf("level" to choice(1, 2, 3, 4, 5, 6, 7, 8, 9))),
@@ -51,6 +62,8 @@ internal object AiResponseSchema {
     private val intentSlots = mapOf(
         "set_ac_power" to "switch", "set_ac_cooling" to "switch", "set_ac_auto" to "switch",
         "set_rear_window_heating" to "switch", "set_tv_power" to "switch",
+        "control_sunroof" to "roof_position", "control_sunshade" to "roof_position",
+        "control_window" to "window_position",
         "set_temperature" to "temperature", "adjust_temperature" to "temperature_adjustment",
         "set_fan_speed" to "fan", "adjust_fan_speed" to "fan_adjustment",
         "set_seat_ventilation" to "seat", "set_seat_heating" to "seat", "set_circulation" to "circulation",
@@ -73,7 +86,8 @@ internal object AiResponseSchema {
             usedDefinitions.put(definition, parameters)
             actions.put(objectOf(mapOf(
                 "intent" to choice(intent), "slots" to JSONObject().put("\$ref", "#/\$defs/$definition"),
-                "success_reply" to value("string"), "failure_reply" to value("string"),
+                "success_reply" to value("string").put("minLength", if (intent == "unknown") 0 else 1).put("maxLength", 512),
+                "failure_reply" to value("string").put("minLength", 1).put("maxLength", 512),
             )))
         }
         return objectOf(mapOf("actions" to value("array").put("items", JSONObject().put("anyOf", actions))))

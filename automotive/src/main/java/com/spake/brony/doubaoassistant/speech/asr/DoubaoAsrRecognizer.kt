@@ -109,12 +109,8 @@ internal class DoubaoAsrRecognizer(
         next.setOptionString(Sdk.PARAMS_KEY_ENGINE_NAME_STRING, Sdk.ASR_ENGINE)
         next.setOptionString(Sdk.PARAMS_KEY_LOG_LEVEL_STRING, Sdk.LOG_LEVEL_WARN)
         next.setOptionString(Sdk.PARAMS_KEY_DEBUG_PATH_STRING, "")
-        if (credentials.apiKey.isNotBlank()) {
-            next.setOptionString(Sdk.PARAMS_KEY_API_KEY_STRING, credentials.apiKey)
-        } else {
-            next.setOptionString(Sdk.PARAMS_KEY_APP_ID_STRING, credentials.appId)
-            next.setOptionString(Sdk.PARAMS_KEY_APP_TOKEN_STRING, credentials.accessToken)
-        }
+        next.setOptionString(Sdk.PARAMS_KEY_APP_ID_STRING, credentials.appId)
+        next.setOptionString(Sdk.PARAMS_KEY_APP_TOKEN_STRING, credentials.accessToken)
         next.setOptionString(Sdk.PARAMS_KEY_RESOURCE_ID_STRING, BuildConfig.DOUBAO_ASR_RESOURCE_ID)
         next.setOptionString(Sdk.PARAMS_KEY_ASR_ADDRESS_STRING, "wss://openspeech.bytedance.com")
         next.setOptionString(Sdk.PARAMS_KEY_ASR_URI_STRING, "/api/v3/sauc/bigmodel_async")

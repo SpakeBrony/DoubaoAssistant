@@ -13,8 +13,6 @@
     <color name="voice_panel">#F8F7FA</color>
     <color name="voice_selected">#E8E5EE</color>
     <color name="voice_accent">#767487</color>
-    <color name="voice_overlay_idle">#9E9E9E</color>
-    <color name="voice_overlay_active">#4CAF50</color>
     <color name="voice_scrim">#1F24202E</color>
     <color name="voice_primary">#35313F</color>
     <color name="voice_on_primary">#FFFFFF</color>

@@ -5,7 +5,6 @@ import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.Rect
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
@@ -16,14 +15,14 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import androidx.annotation.MainThread
-import androidx.core.content.ContextCompat
 import com.spake.brony.doubaoassistant.R
 import com.spake.brony.doubaoassistant.data.model.Appearance
 import com.spake.brony.doubaoassistant.data.model.AsrSnapshot
-import com.spake.brony.doubaoassistant.data.model.AsrStatus
+import com.spake.brony.doubaoassistant.data.model.ConversationPhase
 import com.spake.brony.doubaoassistant.data.model.ConversationSnapshot
 import com.spake.brony.doubaoassistant.data.model.KwsSnapshot
 import com.spake.brony.doubaoassistant.data.model.OverlayStyle
+import com.spake.brony.doubaoassistant.data.repository.AssistantPreferences
 import com.spake.brony.doubaoassistant.databinding.OverlayChatBinding
 import com.spake.brony.doubaoassistant.ui.binding.bindChatControl
 import com.spake.brony.doubaoassistant.ui.binding.bindMicrophone
@@ -37,6 +36,7 @@ internal class ChatOverlay(
     private val onToggleMicrophone: (Boolean) -> Unit = {},
 ) : AutoCloseable {
     private val application = context.applicationContext
+    private val preferences = AssistantPreferences(application)
     private val windows = application.getSystemService(WindowManager::class.java)
     private val geometry = application.getSharedPreferences("chat_overlay_window", Context.MODE_PRIVATE)
     private var binding: OverlayChatBinding? = null
@@ -86,8 +86,10 @@ internal class ChatOverlay(
         if (minimal) {
             next.overlayBackground.visibility = View.GONE
             next.overlayVoiceMark.visibility = View.GONE
-            next.overlayStatus.visibility = View.VISIBLE
-            next.overlayStatusDot.background = next.overlayStatusDot.background.mutate()
+            next.overlayToggleChat.visibility = View.GONE
+            next.overlayMicrophone.background = null
+            root.background = root.background.mutate().apply { alpha = 102 }
+            root.contentDescription = application.getString(R.string.voice_overlay_minimal_move)
             root.elevation = dp(2).toFloat()
         }
         if (compact || minimal) {
@@ -108,7 +110,7 @@ internal class ChatOverlay(
         }
         val screen = screenSize()
         val width = when {
-            minimal -> dp(66).coerceAtMost(screen.x) // 宽高各减半，面积为精简框的四分之一。
+            minimal -> dp(22).coerceAtMost(screen.x)
             compact -> dp(132).coerceAtMost(screen.x)
             else -> geometry.getInt("width", dp(320)).coerceIn(dp(240).coerceAtMost(screen.x), dp(640).coerceAtMost(screen.x))
         }
@@ -157,7 +159,7 @@ internal class ChatOverlay(
         }
         root.onGestureEnd = ::saveGeometry
         next.overlayMicrophone.setOnClickListener { onToggleMicrophone(state.isListening) }
-        next.overlayToggleChat.setOnClickListener { if (state.canControlChat) onToggleChat(state.isPaused) }
+        if (!minimal) next.overlayToggleChat.setOnClickListener { if (state.canControlChat) onToggleChat(state.isPaused) }
         return try {
             windows.addView(root, layout)
             binding = next
@@ -206,22 +208,18 @@ internal class ChatOverlay(
     private fun render() {
         val view = binding ?: return
         if (style == OverlayStyle.MINIMAL) {
-            // 只有 ASR 实际识别亮绿灯；待机、KWS、AI 思考和 TTS 播报保持灰色。
-            val recognizing = state.snapshot.asrRequested && !state.isPaused && !state.isReplying && state.asr.error == null &&
-                state.asr.status in listOf(AsrStatus.STARTING, AsrStatus.LISTENING) &&
-                (state.asr.conversation.liveText.isNotBlank() || state.conversation.liveText.isNotBlank())
-            (view.overlayStatusDot.background as GradientDrawable).setColor(ContextCompat.getColor(view.root.context,
-                if (recognizing) R.color.voice_overlay_active else R.color.voice_overlay_idle))
-            view.overlayStatus.contentDescription = application.getString(
-                if (recognizing) R.string.voice_overlay_minimal_active else R.string.voice_overlay_minimal_idle)
+            val idle = !state.isListening || state.phase == ConversationPhase.PAUSED
+            view.root.background.alpha = if (idle) 102 else 255
         }
-        if (style == OverlayStyle.DETAILED) view.overlayConversation.setConversation(state.conversation, true)
+        if (style == OverlayStyle.DETAILED) view.overlayConversation.setConversation(state.conversation, true, preferences.debugMode)
         bindMicrophone(view.overlayMicrophone, state.isListening)
         view.overlayMicrophone.alpha = if (state.isListening) 1f else .45f
-        if (style != OverlayStyle.MINIMAL) view.overlayVoiceMark.setState(state.phase, state.waveformLevel)
-        bindChatControl(view.overlayToggleChat, state.isPaused)
-        view.overlayToggleChat.isEnabled = state.canControlChat
-        view.overlayToggleChat.alpha = if (state.canControlChat) 1f else .4f
+        if (style != OverlayStyle.MINIMAL) {
+            view.overlayVoiceMark.setState(state.phase, state.waveformLevel)
+            bindChatControl(view.overlayToggleChat, state.isPaused)
+            view.overlayToggleChat.isEnabled = state.canControlChat
+            view.overlayToggleChat.alpha = if (state.canControlChat) 1f else .4f
+        }
     }
 
     override fun close() {

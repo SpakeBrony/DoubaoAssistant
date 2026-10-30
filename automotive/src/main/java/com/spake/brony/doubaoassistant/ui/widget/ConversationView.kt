@@ -21,10 +21,12 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AlertDialog
-import com.spake.brony.doubaoassistant.BuildConfig
 import com.spake.brony.doubaoassistant.R
 import com.spake.brony.doubaoassistant.data.model.ConversationContent
+import com.spake.brony.doubaoassistant.data.model.ConversationMessage
 import com.spake.brony.doubaoassistant.ui.DesignDimensions
+import java.util.Locale
+import org.json.JSONObject
 
 class ConversationView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : ScrollView(context, attrs) {
     var onReplay: ((String) -> Unit)? = null
@@ -35,6 +37,7 @@ class ConversationView @JvmOverloads constructor(context: Context, attrs: Attrib
     private var controlsOnLeft = false
     private val scrollToEnd = Runnable { fullScroll(View.FOCUS_DOWN) }
     private var jsonDialog: AlertDialog? = null
+    private var debugMode = false
     private var dimensions = DesignDimensions(resources.configuration.screenWidthDp.toFloat(), resources.configuration.screenHeightDp.toFloat())
 
     init {
@@ -44,15 +47,18 @@ class ConversationView @JvmOverloads constructor(context: Context, attrs: Attrib
         render()
     }
 
-    fun setConversation(value: ConversationContent, showCaptions: Boolean) {
-        if (content == value && captions == showCaptions && column.childCount > 0) return
+    fun setConversation(value: ConversationContent, showCaptions: Boolean, debugEnabled: Boolean) {
+        if (content == value && captions == showCaptions && debugMode == debugEnabled && column.childCount > 0) return
         val previous = content
         val sameCaptions = captions == showCaptions
+        val sameDebugMode = debugMode == debugEnabled
         content = value
         captions = showCaptions
-        if (sameCaptions && previous.messages == value.messages && previous.liveText == value.liveText) return
+        debugMode = debugEnabled
+        if (!debugMode) jsonDialog?.dismiss()
+        if (sameCaptions && sameDebugMode && previous.messages == value.messages && previous.liveText == value.liveText) return
         // 流式回复只改最后一条文字，避免每个 token 重建整列 TextView。
-        if (sameCaptions && captions && previous.liveText == value.liveText &&
+        if (sameCaptions && sameDebugMode && captions && previous.liveText == value.liveText &&
             value.messages.isNotEmpty() && previous.messages.size == value.messages.size &&
             previous.messages.dropLast(1) == value.messages.dropLast(1) &&
             previous.messages.last().id == value.messages.last().id &&
@@ -65,7 +71,7 @@ class ConversationView @JvmOverloads constructor(context: Context, attrs: Attrib
             followToBottom(follow)
             return
         }
-        if (sameCaptions && captions && previous.messages == value.messages &&
+        if (sameCaptions && sameDebugMode && captions && previous.messages == value.messages &&
             previous.liveText.isNotEmpty() && value.liveText.isNotEmpty() &&
             column.childCount == value.messages.size + 1) {
             val follow = shouldFollow()
@@ -129,32 +135,64 @@ class ConversationView @JvmOverloads constructor(context: Context, attrs: Attrib
             addText(context.getString(R.string.voice_prompt_support), if (compactWindow) 13f else (metrics.width * .013f).coerceIn(17f, 25f), R.color.voice_muted, .02f, marginTop = 20f, lineHeight = 1.4f)
         } else {
             column.gravity = Gravity.TOP
+            var previousUser: ConversationMessage? = null
             content.messages.forEach { message ->
+                if (message.role == ConversationMessage.USER) previousUser = message
                 val assistantStyle = message.isAssistant || message.isSystem
+                val elapsedMillis = if (debugMode && assistantStyle) previousUser
+                    ?.takeIf { it.topicId == message.topicId && it.timeMillis > 0 && message.timeMillis >= it.timeMillis }
+                    ?.let { message.timeMillis - it.timeMillis } else null
                 val parent = if (assistantStyle) LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     column.addView(this, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                         bottomMargin = dp(20f)
                     })
                 } else column
-                val json = message.jsonMessage.takeIf { BuildConfig.DEBUG && !it.isNullOrBlank() }
+                val json = message.jsonMessage.takeIf { debugMode && !it.isNullOrBlank() }
                 var jsonButton: ImageButton? = null
-                val textParent = if (json != null) LinearLayout(context).apply {
+                var elapsedText: TextView? = null
+                val textParent = if (json != null || elapsedMillis != null) LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     isBaselineAligned = false
                     parent.addView(this, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                         if (!assistantStyle) bottomMargin = dp(20f)
                     })
-                    jsonButton = ImageButton(context).apply {
-                        setImageResource(R.drawable.ic_voice_json)
-                        scaleType = ImageView.ScaleType.FIT_CENTER
-                        setPadding(dp(5f), 0, dp(5f), 0)
-                        alpha = .35f
-                        background = null
-                        contentDescription = context.getString(if (assistantStyle) R.string.voice_view_json_response else R.string.voice_view_intent_match)
-                        setOnClickListener { showJson(json, if (assistantStyle) R.string.voice_json_response else R.string.voice_intent_match) }
+                    if (elapsedMillis != null) {
+                        elapsedText = TextView(context).apply {
+                            text = String.format(Locale.ROOT, "%.2fs", elapsedMillis / 1000.0)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                            setTextColor(ContextCompat.getColor(context, R.color.voice_secondary))
+                            alpha = .35f
+                            includeFontPadding = false
+                            gravity = Gravity.CENTER_VERTICAL
+                            contentDescription = context.getString(R.string.voice_reply_elapsed, text)
+                        }
+                        addView(elapsedText, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, dp(24f)).apply { rightMargin = dp(6f) })
                     }
-                    addView(jsonButton, LinearLayout.LayoutParams(dp(24f), dp(24f)).apply { rightMargin = dp(6f) })
+                    if (json != null) {
+                        val classification = !assistantStyle && runCatching {
+                            JSONObject(json).has("is_operation")
+                        }.getOrDefault(false)
+                        val title = when {
+                            assistantStyle -> R.string.voice_json_response
+                            classification -> R.string.voice_intent_classification_result
+                            else -> R.string.voice_intent_match
+                        }
+                        jsonButton = ImageButton(context).apply {
+                            setImageResource(R.drawable.ic_voice_json)
+                            scaleType = ImageView.ScaleType.FIT_CENTER
+                            setPadding(dp(5f), 0, dp(5f), 0)
+                            alpha = .35f
+                            background = null
+                            contentDescription = context.getString(when {
+                                assistantStyle -> R.string.voice_view_json_response
+                                classification -> R.string.voice_view_intent_classification_result
+                                else -> R.string.voice_view_intent_match
+                            })
+                            setOnClickListener { showJson(json, title) }
+                        }
+                        addView(jsonButton, LinearLayout.LayoutParams(dp(24f), dp(24f)).apply { rightMargin = dp(6f) })
+                    }
                 } else parent
                 val replyText = addText(message.text, if (assistantStyle) aiSize else userSize,
                     if (assistantStyle) R.color.voice_text else R.color.voice_secondary,
@@ -164,11 +202,12 @@ class ConversationView @JvmOverloads constructor(context: Context, attrs: Attrib
                     weight = 400,
                     opacity = if (assistantStyle) 1f else .7f,
                     parent = textParent)
-                if (json != null) {
+                if (json != null || elapsedMillis != null) {
                     replyText.layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
                     // 按第一行字体高度对齐，避免图标因大按钮或多行文字而下沉。
                     val font = replyText.paint.fontMetricsInt
                     jsonButton?.layoutParams?.height = font.descent - font.ascent
+                    elapsedText?.layoutParams?.height = font.descent - font.ascent
                 }
                 if (assistantStyle) parent.tag = replyText
                 else if (json != null) textParent.tag = replyText
@@ -210,7 +249,7 @@ class ConversationView @JvmOverloads constructor(context: Context, attrs: Attrib
     }
 
     private fun showJson(json: String, title: Int) {
-        if (!BuildConfig.DEBUG || !isAttachedToWindow) return
+        if (!debugMode || !isAttachedToWindow) return
         jsonDialog?.dismiss()
         val text = TextView(context).apply {
             this.text = json

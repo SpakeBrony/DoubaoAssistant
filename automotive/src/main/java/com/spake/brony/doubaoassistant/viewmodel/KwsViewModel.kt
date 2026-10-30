@@ -31,6 +31,7 @@ data class KwsUiState(
     val speed: Int = 1,
     val replyStyle: ReplyStyle = ReplyStyle.SIMPLE,
     val aiControlEnabled: Boolean = true,
+    val debugMode: Boolean = false,
     val answerMode: AnswerMode = AnswerMode.CHAT,
     val assistantName: String = AssistantName.DEFAULT,
     val backgroundChat: Boolean = false,
@@ -130,6 +131,10 @@ class KwsViewModel(
 
     fun setAiControlEnabled(enabled: Boolean) {
         mutableUiState.value = mutableUiState.value.copy(aiControlEnabled = enabled)
+    }
+
+    fun setDebugMode(enabled: Boolean) {
+        mutableUiState.value = mutableUiState.value.copy(debugMode = enabled)
     }
 
     fun setAnswerMode(mode: AnswerMode) {

@@ -14,7 +14,7 @@ import android.os.Looper
 import android.os.SystemClock
 import com.spake.brony.doubaoassistant.R
 import com.spake.brony.doubaoassistant.conversation.AiOperationFailure
-import com.spake.brony.doubaoassistant.ui.PhonePermissionActivity
+import com.spake.brony.doubaoassistant.ui.permission.RuntimePermissionActivity
 import java.util.Locale
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +29,7 @@ internal class WeatherLocation(context: Context) {
 
     suspend fun current(): Location {
         if (!granted(Manifest.permission.ACCESS_COARSE_LOCATION) &&
-            !PhonePermissionActivity.request(app, listOf(Manifest.permission.ACCESS_COARSE_LOCATION))) {
+            !RuntimePermissionActivity.request(app, listOf(Manifest.permission.ACCESS_COARSE_LOCATION))) {
             throw AiOperationFailure(R.string.weather_location_permission_denied)
         }
         return withContext(Dispatchers.Main.immediate) {

@@ -25,6 +25,9 @@ internal abstract class ChatHistoryDao {
     @Query("SELECT * FROM messages WHERE topic_id = :topicId ORDER BY _id DESC LIMIT 40")
     protected abstract fun findLatestMessages(topicId: String): List<ChatMessageEntity>
 
+    @Query("SELECT time_millis FROM messages ORDER BY _id DESC LIMIT 1")
+    abstract fun lastMessageTime(): Long?
+
     @Query("""UPDATE messages SET content = :content, is_assistant = :role, previous_response_id = :responseId,
         json_message = :jsonMessage
         WHERE message_id = :messageId AND topic_id = :topicId""")

@@ -7,7 +7,7 @@ internal class AiOperationExecutor(
     private val system: SystemOperations,
     private val api: ApiOperations,
 ) {
-    // 查询自带真实回复；普通操作的 reply 为空，由对话流程选择模型提供的候选文案。
+    // 查询及开度控制自带真实回复；其他操作由对话流程选择模型提供的候选文案。
     data class Result(val succeeded: Boolean, val reply: String? = null)
 
     // 所有操作和查询都从这里分发；未接入或未知意图失败，不能误报成功。
@@ -36,6 +36,7 @@ internal class AiOperationExecutor(
             "set_circulation" -> executeCirculation(operation)
             // 后窗加热/后除霜：slots.enabled 必须是 JSON 布尔值，交给车控写入并确认。
             "set_rear_window_heating" -> executeSwitch(operation, car::setRearWindowHeating)
+            "control_sunroof", "control_sunshade", "control_window" -> return executePosition(operation)
             // 系统
             // 音乐控制：只接受 next/previous/play/pause，向 QQ 音乐发送指令。
             "media_control" -> executeMusicControl(operation)
@@ -73,6 +74,28 @@ internal class AiOperationExecutor(
     private suspend fun executeSwitch(operation: AiOperation, execute: suspend (Boolean) -> Boolean): Boolean {
         val enabled = operation.slots.opt("enabled") as? Boolean ?: return false
         return execute(enabled)
+    }
+
+    private suspend fun executePosition(operation: AiOperation): Result {
+        val window = operation.intent == "control_window"
+        val hasSeat = window && operation.slots.has("seat")
+        val seat = if (hasSeat) operation.slots.opt("seat") as? String ?: return Result(false) else "driver"
+        if (window && seat !in listOf("driver", "passenger", "rear_left", "rear_right", "all", "front", "rear")) return Result(false)
+        if (operation.slots.length() != if (hasSeat) 2 else 1) return Result(false)
+        val relative = operation.slots.has("adjustment")
+        val percent = (operation.slots.opt(if (relative) "adjustment" else "percent") as? Number)?.toDouble()
+            ?: return Result(false)
+        if (!percent.isFinite() || percent % 1.0 != 0.0) return Result(false)
+        if (relative) {
+            if (percent != -10.0 && percent != 10.0) return Result(false)
+        } else if (percent !in 0.0..100.0) return Result(false)
+        val reply = when (operation.intent) {
+            "control_sunroof" -> car.controlSunroof(percent.toInt(), relative)
+            "control_sunshade" -> car.controlSunshade(percent.toInt(), relative)
+            "control_window" -> return car.controlWindow(seat, percent.toInt(), relative)
+            else -> null
+        }?.takeIf { it.isNotBlank() }
+        return Result(succeeded = reply != null, reply = reply)
     }
 
     private suspend fun executeCirculation(operation: AiOperation): Boolean {

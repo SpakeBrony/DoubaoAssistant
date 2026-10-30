@@ -1,7 +1,7 @@
 package com.spake.brony.doubaoassistant.data.repository
 
-import com.spake.brony.doubaoassistant.data.model.ConversationSnapshot
 import com.spake.brony.doubaoassistant.data.model.ChatTopic
+import com.spake.brony.doubaoassistant.data.model.ConversationSnapshot
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -12,7 +12,16 @@ object ConversationRepository {
     var activeTopic: ChatTopic? = null
         private set
 
-    internal fun setTopic(topic: ChatTopic) { activeTopic = topic }
-    internal fun publish(snapshot: ConversationSnapshot) { mutableSnapshot.value = snapshot }
-    internal fun reset() { activeTopic = null; publish(ConversationSnapshot()) }
+    internal fun setTopic(topic: ChatTopic) {
+        activeTopic = topic
+    }
+
+    internal fun publish(snapshot: ConversationSnapshot) {
+        mutableSnapshot.value = snapshot
+    }
+
+    internal fun reset() {
+        activeTopic = null
+        publish(ConversationSnapshot())
+    }
 }

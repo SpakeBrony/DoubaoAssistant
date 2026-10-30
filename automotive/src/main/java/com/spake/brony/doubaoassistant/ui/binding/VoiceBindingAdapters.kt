@@ -13,8 +13,10 @@ import com.spake.brony.doubaoassistant.ui.widget.VoiceMarkView
 @BindingAdapter("voicePhase", "voiceLevel")
 fun bindVoicePhase(view: VoiceMarkView, phase: ConversationPhase, level: Float) { view.setState(phase, level) }
 
-@BindingAdapter("conversationContent", "showCaptions")
-fun bindConversation(view: ConversationView, content: ConversationContent, captions: Boolean) { view.setConversation(content, captions) }
+@BindingAdapter("conversationContent", "showCaptions", "conversationDebugMode")
+fun bindConversation(view: ConversationView, content: ConversationContent, captions: Boolean, debugMode: Boolean) {
+    view.setConversation(content, captions, debugMode)
+}
 
 @BindingAdapter("microphoneEnabled")
 fun bindMicrophone(view: ImageView, enabled: Boolean) {

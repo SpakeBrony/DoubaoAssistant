@@ -7,8 +7,13 @@ enum class KwsCommand(val controlCommand: AsrCommand? = null) {
     CLOSE_MICROPHONE(AsrCommand.CLOSE_MICROPHONE);
 
     companion object {
+        private fun greetingKeywords(name: String) = listOf("你好$name")
+
+        fun isGreeting(keyword: String?, name: String = AssistantName.DEFAULT): Boolean =
+            keyword in greetingKeywords(name)
+
         fun fromKeyword(keyword: String, name: String = AssistantName.DEFAULT): KwsCommand? = when (keyword) {
-            "你好$name", "$name$name", "${name}你好", "在吗$name", "${name}在吗",
+            in greetingKeywords(name) -> RESUME
             "可以说话了$name", "说话$name", "${name}说话" -> RESUME
             "闭嘴$name", "${name}闭嘴", "别说话$name", "${name}别说话" -> STOP_REPLY
             "关闭麦克风$name", "${name}关闭麦克风" -> CLOSE_MICROPHONE

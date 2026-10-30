@@ -8,7 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.util.Log
-import com.spake.brony.doubaoassistant.ui.PhonePermissionActivity
+import com.spake.brony.doubaoassistant.ui.permission.RuntimePermissionActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -27,7 +27,7 @@ internal class PhoneLauncher(context: Context) {
             if (name != null) add(Manifest.permission.READ_CONTACTS)
         }
         val missing = required.filter { appContext.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (missing.isNotEmpty() && !PhonePermissionActivity.request(appContext, missing)) return false
+        if (missing.isNotEmpty() && !RuntimePermissionActivity.request(appContext, missing)) return false
         currentCoroutineContext().ensureActive()
         if (required.any { appContext.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) return false
         val number = normalizedNumber ?: findFirstNumber(checkNotNull(name)) ?: return false

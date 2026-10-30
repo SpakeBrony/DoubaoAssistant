@@ -16,6 +16,7 @@
             android:hint="@string/voice_name_hint"
             android:contentDescription="@string/voice_assistant_name"
             android:inputType="text"
+            android:maxLength="3"
             android:singleLine="true"
             android:imeOptions="actionDone"
             android:textSize="20sp" />

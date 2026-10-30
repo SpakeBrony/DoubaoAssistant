@@ -1,7 +1,6 @@
 package com.spake.brony.doubaoassistant.speech.tts
 
 import android.app.Application
-import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Handler
@@ -18,7 +17,6 @@ import com.spake.brony.doubaoassistant.speech.SpeechSdkEnvironment
 import com.spake.brony.doubaoassistant.speech.network.DoubaoBinaryWsClient
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -28,6 +26,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.spake.brony.doubaoassistant.speech.audio.TtsAudioTrackPlayer
+import com.spake.brony.doubaoassistant.speech.audio.VoiceAudioPlayer
 import org.json.JSONObject
 
 // 单独的 TTS 工作线程；不阻塞录音，不在 SDK 回调线程执行停止/销毁。
@@ -39,9 +39,7 @@ internal class DoubaoTtsPlayer(
     private class Inbox {
         val synthesized = AtomicBoolean(false)
         val hasAudio = AtomicBoolean(false)
-        val loggedPlayerAudio = AtomicBoolean(false)
-        val starts = AtomicInteger(0)
-        val finishes = AtomicInteger(0)
+        val playbackCompleted = AtomicBoolean(false)
         val failure = AtomicReference<String?>()
     }
     private class Run(val version: Long, val engine: SpeechEngine, val inbox: Inbox) {
@@ -49,13 +47,14 @@ internal class DoubaoTtsPlayer(
         var sent = 0
         var finishSent = false
         var focus: AudioFocusRequest? = null
+        var playback: TtsAudioTrackPlayer? = null
         var deadline: Job? = null
     }
 
     private val main = Handler(Looper.getMainLooper())
     private val audioManager = application.getSystemService(AudioManager::class.java)
-    private val playbackAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
-        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+    private val playbackAttributes = VoiceAudioPlayer.playbackAttributes()
+    @Volatile private var activePlayback: TtsAudioTrackPlayer? = null
     private val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val signals = Channel<Unit>(Channel.CONFLATED)
@@ -79,9 +78,8 @@ internal class DoubaoTtsPlayer(
                     }
                 }
             } finally {
-                dispose()
-                scope.cancel()
-                dispatcher.close()
+                try { dispose() }
+                finally { scope.cancel(); dispatcher.close() }
             }
         }
     }
@@ -90,6 +88,7 @@ internal class DoubaoTtsPlayer(
     override fun start(version: Long, speed: Int) {
         if (closed) return
         if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=$version start speed=$speed")
+        activePlayback?.close()
         desired = Input(version, speed)
         signals.trySend(Unit)
     }
@@ -110,6 +109,7 @@ internal class DoubaoTtsPlayer(
     override fun cancel() {
         if (BuildConfig.DEBUG) desired?.let { Log.i("DoubaoTts", "reply=${it.version} cancel textChars=${it.text.length}") }
         desired = null // 在处理停止指令前，旧回调及排队文字已经失效。
+        activePlayback?.close()
         signals.trySend(Unit)
     }
 
@@ -142,10 +142,9 @@ internal class DoubaoTtsPlayer(
                 if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${current.version} sent FINISH_SESSION")
             }
         }
-        // SessionFinished 只是合成完成，必须等播放器排空，不能截掉最后一段声音。
-        if (inbox.synthesized.get() && (!inbox.hasAudio.get() ||
-            (inbox.starts.get() > 0 && inbox.finishes.get() >= inbox.starts.get()))) {
-            if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${current.version} completed hasAudio=${inbox.hasAudio.get()} starts=${inbox.starts.get()} finishes=${inbox.finishes.get()}")
+        // SessionFinished 只表示音频收完，必须等 AudioTrack 真正播完才能释放。
+        if (inbox.synthesized.get() && inbox.playbackCompleted.get()) {
+            if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${current.version} AudioTrack completed")
             publish(current.version, TtsProgress(completed = true))
             failedVersion = current.version // 同一份累计输入不重新播放。
             dispose()
@@ -166,18 +165,14 @@ internal class DoubaoTtsPlayer(
         val current = Run(input.version, engine, inbox)
         run = current
         SpeechSdkEnvironment.checkCreatedEngine(engine.createEngine())
-        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${input.version} sdk=${engine.getVersion()} engine=BITTS format=pcm sampleRate=24000")
+        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${input.version} sdk=${engine.getVersion()} engine=BITTS playback=AudioTrack usage=ASSISTANT")
         engine.setContext(application.applicationContext)
         engine.setWsClient(DoubaoBinaryWsClient())
         engine.setOptionString(Sdk.PARAMS_KEY_ENGINE_NAME_STRING, Sdk.BITTS_ENGINE)
         engine.setOptionString(Sdk.PARAMS_KEY_DEBUG_PATH_STRING, "")
         engine.setOptionString(Sdk.PARAMS_KEY_LOG_LEVEL_STRING, Sdk.LOG_LEVEL_WARN)
-        if (credentials.apiKey.isNotBlank()) {
-            engine.setOptionString(Sdk.PARAMS_KEY_API_KEY_STRING, credentials.apiKey)
-        } else {
-            engine.setOptionString(Sdk.PARAMS_KEY_APP_ID_STRING, credentials.appId)
-            engine.setOptionString(Sdk.PARAMS_KEY_APP_TOKEN_STRING, credentials.accessToken)
-        }
+        engine.setOptionString(Sdk.PARAMS_KEY_APP_ID_STRING, credentials.appId)
+        engine.setOptionString(Sdk.PARAMS_KEY_APP_TOKEN_STRING, credentials.accessToken)
         engine.setOptionString(Sdk.PARAMS_KEY_TTS_ADDRESS_STRING, "wss://openspeech.bytedance.com")
         engine.setOptionString(Sdk.PARAMS_KEY_TTS_URI_STRING, "/api/v3/tts/bidirection")
         engine.setOptionString(Sdk.PARAMS_KEY_RESOURCE_ID_STRING, BuildConfig.DOUBAO_TTS_RESOURCE_ID)
@@ -185,14 +180,23 @@ internal class DoubaoTtsPlayer(
         engine.setOptionString(Sdk.PARAMS_KEY_START_ENGINE_PAYLOAD_STRING, payload)
         engine.setOptionInt(Sdk.PARAMS_KEY_TTS_CONN_TIMEOUT_INT, 10000)
         engine.setOptionInt(Sdk.PARAMS_KEY_TTS_RECV_TIMEOUT_INT, 15000)
-        // SDK 播放器与音频焦点统一使用媒体通道，跟随设备媒体音量。
-        engine.setOptionInt(Sdk.PARAMS_KEY_AUDIO_STREAM_TYPE_INT, Sdk.AUDIO_STREAM_TYPE_MEDIA)
-        engine.setOptionDouble(Sdk.PARAMS_KEY_TTS_VOLUME_RATIO_DOUBLE, 1.0)
-        engine.setOptionBoolean(Sdk.PARAMS_KEY_TTS_ENABLE_PLAYER_BOOL, true)
+        // SDK 只合成，网络返回 Ogg/Opus 由系统流式解码成 PCM，再交给 AudioTrack。
+        engine.setOptionBoolean(Sdk.PARAMS_KEY_TTS_ENABLE_PLAYER_BOOL, false)
         engine.setOptionBoolean(Sdk.PARAMS_KEY_TTS_ENABLE_DUMP_BOOL, false)
-        engine.setOptionBoolean(Sdk.PARAMS_KEY_ENABLE_PLAYER_AUDIO_CALLBACK_BOOL, true)
+        engine.setOptionBoolean(Sdk.PARAMS_KEY_ENABLE_PLAYER_AUDIO_CALLBACK_BOOL, false)
+        engine.setOptionInt(Sdk.PARAMS_KEY_TTS_SAMPLE_RATE_INT, 48000)
         SpeechSdkEnvironment.checkCode(engine.initEngine(), "initEngine()")
         SpeechSdkEnvironment.checkCode(engine.sendDirective(Sdk.DIRECTIVE_SYNC_STOP_ENGINE, ""), "SYNC_STOP_ENGINE")
+        current.playback = TtsAudioTrackPlayer(onComplete = {
+            inbox.playbackCompleted.set(true)
+            signals.trySend(Unit)
+        }, onError = { error ->
+            Log.e("DoubaoTts", "AudioTrack playback failed: ${redact(error.toString())}")
+            inbox.failure.set(application.getString(R.string.tts_failed))
+            signals.trySend(Unit)
+        })
+        activePlayback = current.playback
+        if (closed || desired?.version != current.version) current.playback?.close()
         engine.setListener(object : SpeechEngine.SpeechListener {
             override fun onSpeechMessage(type: Int, data: ByteArray?, len: Int) {
                 if (closed || desired?.version != current.version) return
@@ -202,17 +206,23 @@ internal class DoubaoTtsPlayer(
                     Log.i("DoubaoTts", "reply=${current.version} callback=$type len=$len")
                 when (type) {
                     Sdk.MESSAGE_TYPE_EVENT_TTS_RESPONSE -> {
-                        if (len > 0 && !inbox.hasAudio.getAndSet(true) && BuildConfig.DEBUG)
-                            Log.i("DoubaoTts", "reply=${current.version} first synthesized audio len=$len")
+                        try {
+                            if (len == 0) return
+                            current.playback?.append(checkNotNull(data), len)
+                            if (!inbox.hasAudio.getAndSet(true) && BuildConfig.DEBUG)
+                                Log.i("DoubaoTts", "reply=${current.version} first encoded audio len=$len")
+                        } catch (error: Exception) {
+                            Log.e("DoubaoTts", "Invalid audio callback: ${redact(error.toString())}")
+                            current.playback?.close()
+                            inbox.failure.set(application.getString(R.string.tts_failed))
+                            signals.trySend(Unit)
+                        }
+                        return
                     }
-                    Sdk.MESSAGE_TYPE_PLAYER_START_PLAY_AUDIO -> inbox.starts.incrementAndGet()
-                    Sdk.MESSAGE_TYPE_PLAYER_FINISH_PLAY_AUDIO -> inbox.finishes.incrementAndGet()
-                    Sdk.MESSAGE_TYPE_PLAYER_AUDIO_DATA -> {
-                        if (BuildConfig.DEBUG && !inbox.loggedPlayerAudio.getAndSet(true))
-                            Log.i("DoubaoTts", "reply=${current.version} first player PCM len=$len bufferBytes=${data?.size ?: 0}")
-                        return // PCM 不保存、不排队，由 SDK 内置播放器处理。
+                    Sdk.MESSAGE_TYPE_EVENT_SESSION_FINISHED -> {
+                        inbox.synthesized.set(true)
+                        current.playback?.finish()
                     }
-                    Sdk.MESSAGE_TYPE_EVENT_SESSION_FINISHED -> inbox.synthesized.set(true)
                     Sdk.MESSAGE_TYPE_ENGINE_ERROR, Sdk.MESSAGE_TYPE_EVENT_CONNECTION_FAILED,
                     Sdk.MESSAGE_TYPE_EVENT_SESSION_FAILED -> {
                         val message = if (data != null && len in 0..data.size && len <= 65536)
@@ -221,7 +231,7 @@ internal class DoubaoTtsPlayer(
                         Log.e("DoubaoTts", "SDK 错误回调：${redact(message)}")
                         inbox.failure.set(application.getString(R.string.tts_failed))
                     }
-                    else -> return // 不保留音频或记录识别/播报正文。
+                    else -> return
                 }
                 signals.trySend(Unit)
             }
@@ -244,13 +254,14 @@ internal class DoubaoTtsPlayer(
             .setAudioAttributes(playbackAttributes)
             .setOnAudioFocusChangeListener({ focus ->
                 if (focus == AudioManager.AUDIOFOCUS_LOSS || focus == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                    current.playback?.close()
                     current.inbox.failure.set(application.getString(R.string.tts_audio_focus_lost))
                     signals.trySend(Unit)
                 }
             }, main).build()
         current.focus = request
         val result = audioManager.requestAudioFocus(request)
-        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${current.version} audioFocus=$result playbackUsage=MEDIA mediaVolume=${audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)}/${audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)} muted=${audioManager.isStreamMute(AudioManager.STREAM_MUSIC)} mode=${audioManager.mode}")
+        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${current.version} audioFocus=$result playbackUsage=ASSISTANT mode=${audioManager.mode}")
         check(result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { "Android requestAudioFocus() 返回值：$result" }
     }
 
@@ -270,13 +281,15 @@ internal class DoubaoTtsPlayer(
     private fun dispose() {
         val previous = run ?: return
         run = null
-        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${previous.version} dispose textChars=${previous.sent} hasAudio=${previous.inbox.hasAudio.get()} synthesized=${previous.inbox.synthesized.get()} starts=${previous.inbox.starts.get()} finishes=${previous.inbox.finishes.get()}")
+        if (BuildConfig.DEBUG) Log.i("DoubaoTts", "reply=${previous.version} dispose synthesized=${previous.inbox.synthesized.get()} playbackCompleted=${previous.inbox.playbackCompleted.get()}")
         previous.deadline?.cancel()
+        previous.playback?.close()
+        if (activePlayback === previous.playback) activePlayback = null
         try {
             previous.engine.setListener(null)
-            previous.engine.sendDirective(Sdk.DIRECTIVE_PAUSE_PLAYER, "")
             if (previous.sessionRequested && !previous.inbox.synthesized.get())
                 previous.engine.sendDirective(Sdk.DIRECTIVE_EVENT_CANCLE_SESSION, "")
+            SpeechSdkEnvironment.checkCode(previous.engine.sendDirective(Sdk.DIRECTIVE_SYNC_STOP_ENGINE, ""), "SYNC_STOP_ENGINE")
         } catch (e: Exception) { Log.w("DoubaoTts", "Stop playback: ${redact(e.toString())}") }
         catch (e: LinkageError) { Log.w("DoubaoTts", "Stop playback: ${redact(e.toString())}") }
         finally {
@@ -290,6 +303,7 @@ internal class DoubaoTtsPlayer(
     override fun close() {
         closed = true
         desired = null
+        activePlayback?.close()
         signals.close()
         main.removeCallbacksAndMessages(null)
     }
@@ -298,7 +312,7 @@ internal class DoubaoTtsPlayer(
         internal fun sessionPayload(speed: Int): String = JSONObject().apply {
             put("user", JSONObject().put("uid", "doubao-assistant"))
             put("req_params", JSONObject().put("speaker", BuildConfig.DOUBAO_TTS_SPEAKER)
-                .put("audio_params", JSONObject().put("format", "pcm").put("sample_rate", 24000)
+                .put("audio_params", JSONObject().put("format", "ogg_opus").put("sample_rate", 48000)
                     .put("speech_rate", when (speed.coerceIn(0, 2)) { 0 -> -20; 2 -> 20; else -> 0 })))
         }.toString()
 

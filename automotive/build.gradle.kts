@@ -6,12 +6,19 @@ plugins {
     alias(libs.plugins.kotlin.kapt)
 }
 
-val asrProperties = Properties().apply {
+val credentialProperties = Properties().apply {
     val file = rootProject.file("doubao-asr.properties")
     if (file.isFile) file.inputStream().use { load(it) }
 }
-fun asrString(key: String): String = "\"" + asrProperties.getProperty(key, "").trim()
-    .replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "").replace("\r", "") + "\""
+
+fun credentialBuildConfigValue(key: String): String {
+    val value = credentialProperties.getProperty(key, "").trim()
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\n", "")
+        .replace("\r", "")
+    return "\"$value\""
+}
 
 android {
     namespace = "com.spake.brony.doubaoassistant"
@@ -24,8 +31,9 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk { abiFilters += "arm64-v8a" }
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
         buildConfigField("String", "DOUBAO_ASR_RESOURCE_ID", "\"volc.seedasr.sauc.duration\"")
         buildConfigField("String", "DOUBAO_CHAT_MODEL", "\"doubao-seed-2-0-mini-260428\"")
         buildConfigField("String", "DOUBAO_TTS_RESOURCE_ID", "\"seed-tts-2.0\"")
@@ -37,7 +45,6 @@ android {
         create("general") {
             dimension = "distribution"
             applicationIdSuffix = ".general"
-            buildConfigField("String", "DOUBAO_ASR_API_KEY", "\"\"")
             buildConfigField("String", "DOUBAO_ASR_APP_ID", "\"\"")
             buildConfigField("String", "DOUBAO_ASR_ACCESS_TOKEN", "\"\"")
             buildConfigField("String", "DOUBAO_ARK_API_KEY", "\"\"")
@@ -46,10 +53,9 @@ android {
             dimension = "distribution"
             isDefault = true
             // 自用版才嵌入本机凭证，用于首次配置表单预填。
-            buildConfigField("String", "DOUBAO_ASR_API_KEY", asrString("apiKey"))
-            buildConfigField("String", "DOUBAO_ASR_APP_ID", asrString("appId"))
-            buildConfigField("String", "DOUBAO_ASR_ACCESS_TOKEN", asrString("accessToken"))
-            buildConfigField("String", "DOUBAO_ARK_API_KEY", asrString("arkApiKey"))
+            buildConfigField("String", "DOUBAO_ASR_APP_ID", credentialBuildConfigValue("appId"))
+            buildConfigField("String", "DOUBAO_ASR_ACCESS_TOKEN", credentialBuildConfigValue("accessToken"))
+            buildConfigField("String", "DOUBAO_ARK_API_KEY", credentialBuildConfigValue("arkApiKey"))
         }
     }
 
@@ -80,13 +86,9 @@ android {
     lint {
         error += "StaticFieldLeak"
     }
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
-    }
 }
 
 dependencies {
-
     implementation(files("libs/sherpa-onnx-1.13.8.aar"))
     implementation("com.bytedance.speechengine:speechengine_tob:0.0.15.0")
     implementation("com.squareup.okhttp3:okhttp:4.9.1")
@@ -97,9 +99,4 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.room.runtime)
     kapt(libs.androidx.room.compiler)
-    testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.robolectric)
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
 }

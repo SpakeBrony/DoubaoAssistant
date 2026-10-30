@@ -38,6 +38,10 @@ class AssistantPreferences(context: Context) {
         get() = preferences.getBoolean(AI_CONTROL_ENABLED, true)
         set(value) { preferences.edit { putBoolean(AI_CONTROL_ENABLED, value) } }
 
+    var debugMode: Boolean
+        get() = preferences.getBoolean(DEBUG_MODE, false)
+        set(value) { preferences.edit { putBoolean(DEBUG_MODE, value) } }
+
     var answerMode: AnswerMode
         get() = AnswerMode.entries.firstOrNull { it.name == preferences.getString(ANSWER_MODE, null) } ?: AnswerMode.CHAT
         set(value) { preferences.edit { putString(ANSWER_MODE, value.name) } }
@@ -79,6 +83,7 @@ class AssistantPreferences(context: Context) {
         const val SPEED = "speed"
         const val REPLY_STYLE = "reply_style"
         const val AI_CONTROL_ENABLED = "ai_control_enabled"
+        const val DEBUG_MODE = "debug_mode"
         const val MICROPHONE_REQUESTED = "microphone_requested"
         const val CONTACTS_REQUESTED = "contacts_requested"
         const val CALL_PHONE_REQUESTED = "call_phone_requested"

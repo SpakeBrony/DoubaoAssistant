@@ -1,5 +1,6 @@
 package com.spake.brony.doubaoassistant.conversation
 
+import android.util.Log
 import com.spake.brony.doubaoassistant.R
 import com.spake.brony.doubaoassistant.data.model.AsrSnapshot
 import com.spake.brony.doubaoassistant.data.model.AsrStatus
@@ -10,8 +11,6 @@ import com.spake.brony.doubaoassistant.data.model.ConversationPhase
 import com.spake.brony.doubaoassistant.data.model.ResponseProgress
 import com.spake.brony.doubaoassistant.data.model.TtsProgress
 import com.spake.brony.doubaoassistant.data.model.AsrCommand
-import com.spake.brony.doubaoassistant.speech.asr.AsrCommands
-import com.spake.brony.doubaoassistant.speech.asr.AsrIntentPrompt
 import com.spake.brony.doubaoassistant.data.model.AssistantName
 import com.spake.brony.doubaoassistant.data.model.AnswerMode
 import com.spake.brony.doubaoassistant.data.repository.ConversationRepository
@@ -22,6 +21,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -45,7 +47,7 @@ internal class ConversationCoordinator(
     private val answerMode: () -> AnswerMode = { AnswerMode.CHAT },
     private val onSingleQuestionRecognized: () -> Unit = {},
     private val executeOperation: suspend (AiOperation) -> AiOperationExecutor.Result = { AiOperationExecutor.Result(false) },
-    private val judgeOperation: suspend (String) -> Boolean,
+    private val judgeOperation: suspend (String, Set<String>) -> AiIntentClassification,
     private val responses: (String, String?, JSONObject?) -> Flow<ResponseProgress>,
 ) {
     private var enabled = false
@@ -151,7 +153,7 @@ internal class ConversationCoordinator(
         }
         if (draft.isNotEmpty() || pending.isNotEmpty()) {
             val deferInterruption = draft.isNotEmpty() &&
-                AsrCommands.isMicrophoneCommandCandidate(pending.toString() + draft, assistantName())
+                ConversationCommands.isMicrophoneCommandCandidate(pending.toString() + draft, assistantName())
             if (!deferInterruption && (replyJob?.isActive == true || speechActive)) cancelReply()
             waitForSpeech()
             val previous = ConversationRepository.snapshot.value
@@ -173,7 +175,7 @@ internal class ConversationCoordinator(
             ConversationRepository.publish(previous.copy(error = getString(R.string.chat_question_too_long)))
             return
         }
-        AsrCommands.match(text, assistantName())?.let { rule ->
+        ConversationCommands.match(text, assistantName())?.let { rule ->
             recordUserMessage(text)
             onAsrCommand(rule.command)
             return
@@ -191,13 +193,12 @@ internal class ConversationCoordinator(
         ensureTopic()
         val version = requestVersion
         val topicId = checkNotNull(ConversationRepository.activeTopic).id
-        recordUserMessage(text)
+        val userMessage = recordUserMessage(text)
         val controlEnabled = aiControlEnabled()
-        val candidatePrompt = if (controlEnabled) AsrIntentPrompt.instructionFor(text) else ""
+        val candidateIntents = if (controlEnabled) AiIntentPrompt.enabledIntents(text) else emptySet()
         val style = replyInstruction()
         val previous = ConversationRepository.snapshot.value
-        val enabledIntents = if (controlEnabled) AsrIntentPrompt.enabledIntents(text) else emptySet()
-        val timeFormats = if (controlEnabled) AsrIntentPrompt.timeFormatsFor(text) else emptySet()
+        val timeFormats = if (controlEnabled) AiIntentPrompt.timeFormatsFor(text) else emptySet()
         ConversationRepository.publish(previous.copy(error = null, ttsError = null, content = previous.content.copy(
             phase = ConversationPhase.THINKING,
             liveText = "",
@@ -213,12 +214,31 @@ internal class ConversationCoordinator(
             var systemReply = false
             var responseTerminated = false
             var speechStarted = false
-            var classifying = candidatePrompt.isNotBlank()
+            var classifying = candidateIntents.isNotEmpty()
+            fun appendReplySpeech(displayText: String): String? {
+                if (displayText.startsWith(spokenText)) {
+                    if (!speechStarted) {
+                        speech?.start(version, replySpeed)
+                        speechStarted = true
+                    }
+                    speech?.append(displayText.substring(spokenText.length))
+                    spokenText = displayText
+                } else {
+                    speech?.cancel()
+                    speechActive = false
+                    return getString(R.string.chat_reply_revised)
+                }
+                return null
+            }
             try {
-                // 关键词只是候选；先独立判断，false 完全不发送意图协议。
-                val intentRequest = classifying && judgeOperation(text) && aiControlEnabled()
+                // 关键词只是候选；先筛选本轮意图，第二轮仅发送选中能力的详细规则。
+                val classification = if (classifying) judgeOperation(text, candidateIntents + "unknown") else null
                 classifying = false
                 if (!enabled || version != requestVersion || ConversationRepository.activeTopic?.id != topicId) return@launch
+                if (classification != null) saveClassification(userMessage, classification)
+                val enabledIntents = classification?.intents.orEmpty()
+                val intentRequest = classification?.isOperation == true && aiControlEnabled()
+                val operationPrompt = if (intentRequest) AiIntentPrompt.instructionFor(enabledIntents) else ""
                 if (intentRequest) {
                     val current = ConversationRepository.snapshot.value
                     ConversationRepository.publish(current.copy(content = current.content.copy(phase = ConversationPhase.EXECUTING)))
@@ -230,7 +250,7 @@ internal class ConversationCoordinator(
                     !controlEnabled || !aiControlEnabled() -> false
                     else -> null
                 }
-                val requestText = listOf(text, style, candidatePrompt.takeIf { intentRequest }.orEmpty())
+                val requestText = listOf(text, if (intentRequest) operationPrompt else style)
                     .filter { it.isNotBlank() }.joinToString("\n")
                 // 判断为聊天时，不应因为没有使用的 Config 提示词过长而拒绝本轮。
                 if (requestText.length > 8192) {
@@ -266,33 +286,8 @@ internal class ConversationCoordinator(
                             val operations = AiOperation.parseAll(responseText)
                                 ?.takeIf { actions -> intentRequest && actions.all { it.isAllowed(enabledIntents, timeFormats) } }
                             systemReply = true
-                            jsonReply = if (operations == null) getString(R.string.voice_operation_invalid_reply) else {
-                                val replies = mutableListOf<String>()
-                                for (operation in operations) {
-                                    if (!enabled || version != requestVersion) return@collect
-                                    var failureReply = operation.failureReply
-                                    var successReply = operation.successReply
-                                    val succeeded = try {
-                                        // 请求期间关闭开关，也不能继续执行后续操作。
-                                        val result = if (aiControlEnabled()) executeOperation(operation) else AiOperationExecutor.Result(false)
-                                        successReply = result.reply ?: operation.successReply
-                                        result.succeeded
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: AiOperationFailure) {
-                                        val detail = getString(e.reply)
-                                        // 单项、多项都保留对象和动作，再补充缺权限/无红外等真实原因。
-                                        failureReply = "${operation.failureReply.trim().trimEnd('。', '；')}：$detail"
-                                        false
-                                    } catch (_: Exception) {
-                                        false
-                                    }
-                                    // 某项失败仍继续后续操作；取消当前对话会停止剩余操作。
-                                    replies += if (succeeded) successReply else failureReply
-                                }
-                                if (replies.size == 1) replies.single()
-                                else replies.joinToString("；") { it.trim().trimEnd('。', '；') } + "。"
-                            }
+                            jsonReply = if (operations == null) getString(R.string.voice_operation_invalid_reply)
+                                else executeOperations(operations, version) ?: return@collect
                             if (!enabled || version != requestVersion) return@collect
                         } else if (operationCandidate == null) operationCandidate = false
                     }
@@ -304,45 +299,16 @@ internal class ConversationCoordinator(
                     }
                     val current = ConversationRepository.snapshot.value
                     val messages = current.content.messages.toMutableList()
-                    if (displayText.isNotEmpty()) {
-                        val message = replyMessage?.copy(text = displayText) ?: newMessage(displayText,
-                            if (systemReply) ConversationMessage.SYSTEM else ConversationMessage.ASSISTANT)
-                        replyMessage = message
-                        replyDirty = true
-                        val replyIndex = messages.indexOfLast { it.id == message.id }
-                        if (replyIndex < 0) {
-                            messages += message
-                            if (messages.size > 40) messages.removeAt(0)
-                        } else messages[replyIndex] = message
-                    }
+                    updateReplyMessage(messages, displayText, systemReply)
                     var ttsError = current.ttsError
                     if (speechActive && update.error == null && displayText.isNotEmpty()) {
-                        if (displayText.startsWith(spokenText)) {
-                            if (!speechStarted) {
-                                speech?.start(version, replySpeed)
-                                speechStarted = true
-                            }
-                            speech?.append(displayText.substring(spokenText.length))
-                            spokenText = displayText
-                        } else {
-                            speech?.cancel()
-                            speechActive = false
-                            ttsError = getString(R.string.chat_reply_revised)
-                        }
+                        ttsError = appendReplySpeech(displayText) ?: ttsError
                     }
                     if (update.completedId != null && update.error == null) {
                         responseCompleted = true
-                        replyMessage?.let { message ->
-                            val completed = message.copy(
-                                previousResponseId = if (systemReply || intentRequest) null else update.completedId,
-                                // 仅记录本轮意图请求的原始输出；正文和 TTS 仍使用最终回复文案。
-                                jsonMessage = responseText.takeIf { intentRequest },
-                            )
-                            replyMessage = completed
-                            replyDirty = true
-                            val index = messages.indexOfLast { it.id == completed.id }
-                            if (index >= 0) messages[index] = completed
-                        }
+                        completeReplyMessage(messages,
+                            responseId = if (systemReply || intentRequest) null else update.completedId,
+                            jsonMessage = responseText.takeIf { intentRequest })
                         if (speechActive && speechStarted) speech?.finish()
                         else speechActive = false
                     }
@@ -384,6 +350,86 @@ internal class ConversationCoordinator(
             }
         }
         replyJob?.start()
+    }
+
+    private suspend fun executeOperations(operations: List<AiOperation>, version: Long): String? = coroutineScope {
+        val replies = arrayOfNulls<String>(operations.size)
+        // 同一设备、应用启动或共享查询状态保序，不同资源并发等待。
+        operations.withIndex().groupBy { (_, operation) ->
+            when (operation.intent) {
+                "set_volume", "adjust_volume" -> "volume"
+                "set_tv_power" -> "infrared"
+                "get_weather", "get_time" -> "information"
+                "open_app", "navigate", "call_phone", "media_control", "play_song", "play_favorites" -> "apps"
+                else -> "car"
+            }
+        }.values.map { group ->
+            async {
+                for ((index, operation) in group) {
+                    if (!enabled || version != requestVersion) return@async
+                    replies[index] = executeOperationReply(operation)
+                }
+            }
+        }.awaitAll()
+        if (!enabled || version != requestVersion) return@coroutineScope null
+        val completed = replies.map { checkNotNull(it) }
+        if (completed.size == 1) completed.single()
+        else completed.joinToString("；") { it.trim().trimEnd('。', '；') } + "。"
+    }
+
+    private suspend fun executeOperationReply(operation: AiOperation): String {
+        val conciseFailure = operation.intent in listOf("control_sunroof", "control_sunshade", "control_window")
+        var failureReply = if (conciseFailure) operation.failureReply.substringBefore('：').substringBefore(':').trim()
+            else operation.failureReply
+        var successReply = operation.successReply
+        val succeeded = try {
+            // 请求期间关闭开关，也不能继续执行后续操作。
+            val result = if (aiControlEnabled()) executeOperation(operation) else AiOperationExecutor.Result(false)
+            result.reply?.let { if (result.succeeded) successReply = it else failureReply = it }
+            result.succeeded
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AiOperationFailure) {
+            val detail = getString(e.reply)
+            if (conciseFailure) {
+                Log.w("DoubaoCar", "${operation.intent}: $detail", e)
+            } else {
+                failureReply = "${operation.failureReply.trim().trimEnd('。', '；')}：$detail"
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+        // 单项失败不取消其他操作；对话取消会传递给所有并发任务。
+        return if (succeeded) successReply else failureReply
+    }
+
+    private fun updateReplyMessage(messages: MutableList<ConversationMessage>, displayText: String, systemReply: Boolean) {
+        if (displayText.isNotEmpty()) {
+            val message = replyMessage?.copy(text = displayText) ?: newMessage(displayText,
+                if (systemReply) ConversationMessage.SYSTEM else ConversationMessage.ASSISTANT)
+            replyMessage = message
+            replyDirty = true
+            val replyIndex = messages.indexOfLast { it.id == message.id }
+            if (replyIndex < 0) {
+                messages += message
+                if (messages.size > 40) messages.removeAt(0)
+            } else messages[replyIndex] = message
+        }
+    }
+
+    private fun completeReplyMessage(messages: MutableList<ConversationMessage>, responseId: String?, jsonMessage: String?) {
+        replyMessage?.let { message ->
+            val completed = message.copy(
+                previousResponseId = responseId,
+                // 仅记录本轮意图请求的原始输出；正文和 TTS 仍使用最终回复文案。
+                jsonMessage = jsonMessage,
+            )
+            replyMessage = completed
+            replyDirty = true
+            val index = messages.indexOfLast { it.id == completed.id }
+            if (index >= 0) messages[index] = completed
+        }
     }
 
     private fun cancelReply() {
@@ -492,15 +538,24 @@ internal class ConversationCoordinator(
         createTopic(topic)
     }
 
-    private fun recordUserMessage(text: String) {
+    private fun recordUserMessage(text: String): ConversationMessage {
         ensureTopic()
-        val message = newMessage(text, ConversationMessage.USER).copy(
-            jsonMessage = if (aiControlEnabled()) AsrIntentPrompt.matchJsonFor(text) else null,
-        )
+        val message = newMessage(text, ConversationMessage.USER)
         saveMessage(message)
         val current = ConversationRepository.snapshot.value
         ConversationRepository.publish(current.copy(content = current.content.copy(
             messages = (current.content.messages + message).takeLast(40), liveText = "")))
+        return message
+    }
+
+    private fun saveClassification(userMessage: ConversationMessage, classification: AiIntentClassification) {
+        val updated = userMessage.copy(jsonMessage = classification.json)
+        saveMessage(updated)
+        val current = ConversationRepository.snapshot.value
+        ConversationRepository.publish(current.copy(content = current.content.copy(
+            messages = current.content.messages.map { message ->
+                if (message.id == updated.id && message.topicId == updated.topicId) updated else message
+            })))
     }
 
     private fun newMessage(text: String, role: Int) = ConversationMessage(

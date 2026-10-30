@@ -1,9 +1,8 @@
 # Copy to doubao-asr.properties. Only personal debug/release builds embed these defaults. General builds leave all credential fields empty.
-# New console: apiKey. Old console: appId + accessToken. Secret Key is not needed.
-apiKey=
+# Speech recognition uses appId + accessToken. Secret Key is not needed.
 appId=
 accessToken=
 # Ark Responses API credential, separate from the speech recognition credential.
 arkApiKey=
-# Bidirectional TTS reuses the speech apiKey or appId + accessToken above.
+# Bidirectional TTS reuses the appId + accessToken above.
 # Resource: seed-tts-2.0; voice: zh_female_vv_uranus_bigtts.

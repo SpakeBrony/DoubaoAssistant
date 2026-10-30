@@ -5,6 +5,7 @@ import android.hardware.ConsumerIrManager
 import android.util.Log
 import com.spake.brony.doubaoassistant.R
 import com.spake.brony.doubaoassistant.conversation.AiOperationFailure
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -15,22 +16,34 @@ internal class TvIrController(context: Context) {
     private val appContext = context.applicationContext
 
     suspend fun setPower(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
-        val ir = appContext.getSystemService(Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
-        if (ir?.hasIrEmitter() != true) {
-            Log.w("TvIr", "设备不支持红外功能")
-            throw AiOperationFailure(R.string.tv_ir_unavailable)
+        try {
+            val ir = appContext.getSystemService(Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
+            if (ir?.hasIrEmitter() != true) {
+                Log.w("TvIr", "设备不支持红外功能")
+                throw AiOperationFailure(R.string.tv_ir_unavailable)
+            }
+            val pattern = if (enabled) TvIrCodes.powerOnPattern else TvIrCodes.powerOffPattern
+            if (pattern.isEmpty()) throw AiOperationFailure(R.string.tv_ir_not_configured)
+            // Android 要求正数微秒序列、总时长小于 2 秒；不接受模型生成的原始红外码。
+            if (TvIrCodes.carrierFrequency <= 0 || pattern.any { it <= 0 } ||
+                pattern.sumOf { it.toLong() } >= 2_000_000L) throw AiOperationFailure(R.string.tv_ir_invalid_code)
+            val ranges = ir.carrierFrequencies
+            if (ranges.isNullOrEmpty()) throw AiOperationFailure(R.string.tv_ir_frequency_unavailable)
+            if (ranges.none { TvIrCodes.carrierFrequency in it.minFrequency..it.maxFrequency })
+                throw AiOperationFailure(R.string.tv_ir_frequency_unsupported)
+            currentCoroutineContext().ensureActive()
+            ir.transmit(TvIrCodes.carrierFrequency, pattern)
+            Log.i("TvIr", "电视${if (enabled) "开机" else "关机"}红外信号已发送：${TvIrCodes.carrierFrequency} Hz")
+            true // 只代表信号发送完成，电视是否响应由用户确认。
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: SecurityException) {
+            Log.e("TvIr", "系统拒绝红外调用", error)
+            throw AiOperationFailure(R.string.tv_ir_permission_denied)
+        } catch (error: RuntimeException) {
+            Log.e("TvIr", "红外硬件调用失败", error)
+            throw AiOperationFailure(R.string.tv_ir_failed)
         }
-        val pattern = if (enabled) TvIrCodes.powerOnPattern else TvIrCodes.powerOffPattern
-        if (pattern.isEmpty()) throw AiOperationFailure(R.string.tv_ir_not_configured)
-        // Android 要求正数微秒序列、总时长小于 2 秒；不接受模型生成的原始红外码。
-        if (TvIrCodes.carrierFrequency <= 0 || pattern.any { it <= 0 } ||
-            pattern.sumOf { it.toLong() } >= 2_000_000L) throw AiOperationFailure(R.string.tv_ir_invalid_code)
-        val ranges = ir.carrierFrequencies ?: return@withContext false
-        if (ranges.none { TvIrCodes.carrierFrequency in it.minFrequency..it.maxFrequency })
-            throw AiOperationFailure(R.string.tv_ir_frequency_unsupported)
-        currentCoroutineContext().ensureActive()
-        ir.transmit(TvIrCodes.carrierFrequency, pattern)
-        true // 只代表信号发送完成，电视是否响应由用户确认。
     }
 }
 

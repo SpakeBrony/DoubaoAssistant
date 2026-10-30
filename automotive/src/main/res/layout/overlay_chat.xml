@@ -64,19 +64,6 @@
                     android:layout_height="32dp"
                     android:layout_weight="1"
                     android:importantForAccessibility="no" />
-                <FrameLayout android:id="@+id/overlay_status"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:visibility="gone"
-                    android:contentDescription="@string/voice_overlay_minimal_idle">
-                    <View android:id="@+id/overlay_status_dot"
-                        android:layout_width="8dp"
-                        android:layout_height="8dp"
-                        android:layout_gravity="center"
-                        android:background="@drawable/voice_overlay_dot"
-                        android:importantForAccessibility="no" />
-                </FrameLayout>
                 <ImageButton android:id="@+id/overlay_toggle_chat"
                     style="@style/Voice.IconButton"
                     android:layout_width="48dp"
